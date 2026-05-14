@@ -190,7 +190,7 @@ Example:
 default_project_config: /path/to/current/project/project_config.yaml
 
 slurm_defaults:
-  partition: general
+  partition: short
   account: my_account
   cpus_per_task: 1
   max_array_size: 1000
@@ -200,9 +200,9 @@ resource_defaults:
   default_time_minutes: 60
   default_ram_mb: 16000
   min_time_minutes: 5
-  min_ram_mb: 2000
-  safety_time_multiplier: 1.5
-  safety_ram_multiplier: 1.5
+  min_ram_mb: 1000
+  safety_time_multiplier: 1.25
+  safety_ram_multiplier: 1.25
   oom_retry_multiplier: 2.0
   timeout_retry_multiplier: 2.0
 
@@ -283,7 +283,7 @@ simulator:
   python_executable: python
 
 slurm:
-  partition: general
+  partition: short
   account: my_account
   cpus_per_task: 1
   max_array_size: 1000
@@ -353,18 +353,22 @@ default_parameters:
   architecture: polygenic
   effect_distribution: normal
   ascertainment_model: none
+  N: 500
+  num_variants: 500
+  h2: 0.5
+  replicates: 1
 
 simulation_sets:
   - grid:
-      N: [10000, 50000, 100000]
-      num_variants: [10000, 50000]
+      N: [500, 1000, 2000]
+      num_variants: [500, 1000]
       h2: [0.1, 0.2, 0.5]
     replicates: 20
 
   - name: large_N_extra
     grid:
-      N: [500000, 1000000]
-      num_variants: [10000]
+      N: [4000, 5000]
+      num_variants: [5000]
       h2: [0.2]
     replicates: 5
 
@@ -400,6 +404,7 @@ For each simulation set:
 5. Create one logical run per replicate.
 
 The manifest builder should produce fully explicit parameter JSON for each parameter set based on the current spec.
+To be clear, a simulation set is simply a group of variable lists that are expanded grid-like. The combinations of parameters in each grid are then appended together across grids to produce a single manifest.
 
 ---
 
@@ -479,7 +484,7 @@ The replicate number is not part of `params_json`.
 The `attempt_id` is:
 
 ```text
-<run_id>_a<attempt_number>
+<run_id>_a<attempt>
 ```
 
 Example:
@@ -491,7 +496,7 @@ Example:
 Attempt numbers are assigned by the registry:
 
 ```text
-attempt_number = 1 + max(previous attempt_number for this run_id)
+attempt = 1 + max(previous attempt for this run_id)
 ```
 
 The first attempt for a run is attempt 1.
@@ -634,11 +639,11 @@ Required columns:
 
 | Column | Meaning |
 |---|---|
-| `attempt_id` | `<run_id>_a<attempt_number>` |
+| `attempt_id` | `<run_id>_a<attempt>` |
 | `run_id` | Logical run ID |
 | `param_set_id` | Parameter set ID |
 | `replicate` | Replicate number |
-| `attempt_number` | Integer attempt number |
+| `attempt` | Attempt number |
 | `status` | Attempt status |
 | `plan_id` | Plan that created this attempt |
 | `group_id` | Group containing this attempt |
@@ -987,7 +992,7 @@ python simulator.py \
   --param-set-id '<param_set_id>' \
   --replicate '<replicate>' \
   --attempt-id '<attempt_id>' \
-  --attempt-number '<attempt_number>' \
+  --attempt '<attempt>' \
   --seed '<seed>' \
   --log-path '<attempt_log_path>' \
   --output-dir '<output_dir>'
@@ -1061,14 +1066,14 @@ SimMgr should write the first event before calling the simulator.
 Example:
 
 ```json
-{"event":"attempt_metadata","attempt_id":"8f3a91c4e2b7_r2_a3","attempt_number":3,"run_id":"8f3a91c4e2b7_r2","param_set_id":"8f3a91c4e2b7","replicate":2,"params":{"N":100000,"h2":0.2,"num_variants":50000,"simulator_version":1},"seed":812381,"allocated_time_minutes":60,"allocated_ram_mb":16000}
+{"event":"attempt_metadata","attempt_id":"8f3a91c4e2b7_r2_a3","attempt":3,"run_id":"8f3a91c4e2b7_r2","param_set_id":"8f3a91c4e2b7","replicate":2,"params":{"N":100000,"h2":0.2,"num_variants":50000,"simulator_version":1},"seed":812381,"allocated_time_minutes":60,"allocated_ram_mb":16000}
 ```
 
 This event should include:
 
 - `event`;
 - `attempt_id`;
-- `attempt_number`;
+- `attempt`;
 - `run_id`;
 - `param_set_id`;
 - `replicate`;
@@ -1122,7 +1127,7 @@ This is separate from the SimMgr attempt terminal event.
 After the simulator process exits, `run-one` should append:
 
 ```json
-{"event":"attempt_finished","attempt_id":"8f3a91c4e2b7_r2_a3","attempt_number":3,"status":"succeeded","exit_code":0,"elapsed_seconds":83.5}
+{"event":"attempt_finished","attempt_id":"8f3a91c4e2b7_r2_a3","attempt":3,"status":"succeeded","exit_code":0,"elapsed_seconds":83.5}
 ```
 
 The `attempt_finished` event is the main event that `collect-status` should look for.
@@ -1343,7 +1348,7 @@ SimMgr should dynamically create buckets by rounding predicted resources indepen
 Memory ladder:
 
 ```text
-2G, 4G, 8G, 16G, then 32G, 48G, 64G, 80G, 96G, 112G, 128G, ...
+1G, 2G, 4G, 8G, 16G, then 32G, 48G, 64G, 80G, 96G, 112G, 128G, ...
 ```
 
 Rule:
@@ -1501,7 +1506,7 @@ Contains commands for each array/resource bucket.
 Example conceptual command:
 
 ```bash
-sbatch --partition=general --account=my_account --cpus-per-task=1 --mem=16G --time=01:00:00 --array=1-500 simmgr_run_group.sh --project-config /path/project_config.yaml --plan-id plan_007 --array-id array_001
+sbatch --partition=short --account=my_account --cpus-per-task=1 --mem=16G --time=01:00:00 --array=1-500 simmgr_run_group.sh --project-config /path/project_config.yaml --plan-id plan_007 --array-id array_001
 ```
 
 Codex can decide exact wrapper structure, but `sbatch_commands.sh` should be human-inspectable and runnable.
@@ -1916,7 +1921,7 @@ Mutable but atomic TSV registries
 Explicit parameter canonicalization
 param_set_id = hash(params_json)
 run_id = <param_set_id>_r<replicate>
-attempt_id = <run_id>_a<attempt_number>
+attempt_id = <run_id>_a<attempt>
 One logical run can have many attempts
 Retries do not create new manifests
 Resource predictions stored in plan directories
