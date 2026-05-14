@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 SCHEMA_SQL = """
@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS attempts (
   slurm_job_id TEXT,
   slurm_array_task_id TEXT,
   allocated_time_minutes INTEGER,
-  allocated_ram_mb INTEGER,
+  allocated_ram_gb REAL,
   allocated_cpus INTEGER,
   attempt_log_path TEXT,
   created_at TEXT NOT NULL,
@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS attempts (
   started_at TEXT,
   ended_at TEXT,
   elapsed_seconds REAL,
-  max_rss_mb REAL,
+  max_rss_gb REAL,
   exit_code INTEGER,
   exit_reason TEXT,
   updated_at TEXT NOT NULL,
@@ -121,4 +121,3 @@ CREATE INDEX IF NOT EXISTS idx_attempts_slurm_job_id ON attempts(slurm_job_id);
 CREATE INDEX IF NOT EXISTS idx_manifest_runs_run_id ON manifest_runs(run_id);
 CREATE INDEX IF NOT EXISTS idx_manifest_runs_param_set_id ON manifest_runs(param_set_id);
 """
-

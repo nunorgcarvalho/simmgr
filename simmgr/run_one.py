@@ -48,7 +48,7 @@ def run_one(
             "params": params,
             "seed": seed,
             "allocated_time_minutes": attempt["allocated_time_minutes"],
-            "allocated_ram_mb": attempt["allocated_ram_mb"],
+            "allocated_ram_gb": attempt["allocated_ram_gb"],
             "allocated_cpus": attempt["allocated_cpus"],
             "simmgr_version": __version__,
         },
@@ -97,4 +97,3 @@ def run_one(
 
 def run_one_from_fields(project_config: str | Path, attempt: dict[str, Any]) -> int:
     return run_one(project_config, attempt["attempt_id"])
-

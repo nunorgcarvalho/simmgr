@@ -6,26 +6,26 @@ The implementation follows `docs/SimMgr_specification.md`.
 
 ## Quick Start
 
-Use the Python 3.13 environment on the cluster:
+Make sure your shell's `python` command points at the environment you want to use, then set `default_project_config` in `global_config.yaml`. After that, everyday commands can use the active project by default:
 
 ```bash
-/n/groups/price/nuno/.venv_py13/bin/python -m simmgr.cli init --project-root /path/to/project
-/n/groups/price/nuno/.venv_py13/bin/python -m simmgr.cli build-manifest --project-config /path/to/project/project_config.yaml
-/n/groups/price/nuno/.venv_py13/bin/python -m simmgr.cli ingest-manifest --project-config /path/to/project/project_config.yaml --manifest latest
-/n/groups/price/nuno/.venv_py13/bin/python -m simmgr.cli plan-jobs --project-config /path/to/project/project_config.yaml --where 'status == "pending"'
+python -m simmgr.cli init --project-root /path/to/project
+python -m simmgr.cli build-manifest
+python -m simmgr.cli ingest-manifest --manifest latest
+python -m simmgr.cli plan-jobs --where 'status == "pending"'
 ```
 
 Inspect the generated `plans/plan_XXX/` directory before submission:
 
 ```bash
-/n/groups/price/nuno/.venv_py13/bin/python -m simmgr.cli submit-jobs --project-config /path/to/project/project_config.yaml --plan plan_001
+python -m simmgr.cli submit-jobs --plan plan_001
 ```
 
 After jobs finish:
 
 ```bash
-/n/groups/price/nuno/.venv_py13/bin/python -m simmgr.cli collect-status --project-config /path/to/project/project_config.yaml --plan plan_001
-/n/groups/price/nuno/.venv_py13/bin/python -m simmgr.cli export-registry --project-config /path/to/project/project_config.yaml
+python -m simmgr.cli collect-status --plan plan_001
+python -m simmgr.cli export-registry
 ```
 
 See `docs/user_manual.md` for the simulator contract and demo notes. The repo also includes `demos/popstat_demo_simulator.py` plus a small seeded demo project under `demos/popstat_demo_project/`.

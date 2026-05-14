@@ -15,15 +15,15 @@ from .state import next_number
 from .time_utils import utc_now
 
 
-def round_ram_mb(value: float, min_ram_mb: int = 1000) -> int:
-    gb = max(value, min_ram_mb) / 1024.0
+def round_ram_gb(value: float, min_ram_gb: float = 1.0) -> int:
+    gb = max(value, min_ram_gb)
     if gb <= 1:
         rounded = 1
     elif gb <= 16:
         rounded = 2 ** math.ceil(math.log2(gb))
     else:
         rounded = int(math.ceil(gb / 16.0) * 16)
-    return int(rounded * 1024)
+    return int(rounded)
 
 
 def round_time_minutes(value: float, min_time_minutes: int = 5) -> int:
@@ -47,19 +47,21 @@ def learn_resources(project_config: str | Path | None = None, global_config: str
         data = rows(
             conn,
             """
-            SELECT a.elapsed_seconds, a.max_rss_mb, p.params_json
+            SELECT a.elapsed_seconds, a.max_rss_gb, p.params_json
             FROM attempts a JOIN param_sets p USING(param_set_id)
-            WHERE a.status = 'succeeded' AND a.elapsed_seconds IS NOT NULL AND a.max_rss_mb IS NOT NULL
+            WHERE a.status = 'succeeded' AND a.elapsed_seconds IS NOT NULL AND a.max_rss_gb IS NOT NULL
             """,
         )
     if len(data) < 2:
-        raise SystemExit("Need at least two successful attempts with elapsed_seconds and max_rss_mb to learn resources")
+        raise SystemExit("Need at least two successful attempts with elapsed_seconds and max_rss_gb to learn resources")
     feature_names, matrix = _feature_matrix([parse_params_json(r["params_json"]) for r in data], feature_cfg)
-    x = np.column_stack([np.ones(len(matrix)), matrix])
+    x_scaled, scaling = _standardize_matrix(matrix, feature_names)
+    x = np.column_stack([np.ones(len(x_scaled)), x_scaled])
     runtime_y = np.log(np.maximum([float(r["elapsed_seconds"]) for r in data], 1e-6))
-    memory_y = np.log(np.maximum([float(r["max_rss_mb"]) for r in data], 1e-6))
-    runtime_coef = np.linalg.lstsq(x, runtime_y, rcond=None)[0]
-    memory_coef = np.linalg.lstsq(x, memory_y, rcond=None)[0]
+    memory_y = np.log(np.maximum([float(r["max_rss_gb"]) for r in data], 1e-6))
+    ridge_lambda = float(feature_cfg.get("ridge_lambda", 1.0))
+    runtime_coef = _fit_ridge(x, runtime_y, ridge_lambda)
+    memory_coef = _fit_ridge(x, memory_y, ridge_lambda)
     runtime_resid = runtime_y - x @ runtime_coef
     memory_resid = memory_y - x @ memory_coef
     number = next_number(state_path(config), "last_resource_model_number")
@@ -71,13 +73,16 @@ def learn_resources(project_config: str | Path | None = None, global_config: str
         "model_type": "log_linear_regression",
         "training_attempt_count": len(data),
         "features": feature_cfg,
+        "feature_names": feature_names,
+        "feature_scaling": scaling,
+        "ridge_lambda": ridge_lambda,
         "runtime_model": {
             "response": "log_runtime_seconds",
             "coefficients": dict(zip(coef_names, map(float, runtime_coef))),
             "residual_sd": float(np.std(runtime_resid, ddof=1)) if len(data) > 1 else 0.0,
         },
         "memory_model": {
-            "response": "log_max_rss_mb",
+            "response": "log_max_rss_gb",
             "coefficients": dict(zip(coef_names, map(float, memory_coef))),
             "residual_sd": float(np.std(memory_resid, ddof=1)) if len(data) > 1 else 0.0,
         },
@@ -108,29 +113,42 @@ def predict_for_runs(config: dict[str, Any], run_rows: list[dict[str, Any]], res
             model_id = model["resource_model_id"]
         else:
             predicted_time = float(resources["default_time_minutes"])
-            predicted_ram = float(resources["default_ram_mb"])
+            predicted_ram = float(resources["default_ram_gb"])
             reason = "fallback"
             model_id = "fallback"
         latest = latest_attempts.get(run["run_id"])
-        if retry_policy == "oom" and latest and latest.get("allocated_ram_mb"):
-            predicted_ram = max(predicted_ram, float(latest["allocated_ram_mb"]) * float(resources["oom_retry_multiplier"]))
+        if retry_policy == "oom" and latest and latest.get("allocated_ram_gb"):
+            predicted_ram = max(predicted_ram, float(latest["allocated_ram_gb"]) * float(resources["oom_retry_multiplier"]))
             reason = "retry after OOM"
         if retry_policy == "timeout" and latest and latest.get("allocated_time_minutes"):
             predicted_time = max(predicted_time, float(latest["allocated_time_minutes"]) * float(resources["timeout_retry_multiplier"]))
             reason = "retry after timeout"
-        allocated_time = round_time_minutes(predicted_time * float(resources["safety_time_multiplier"]), int(resources["min_time_minutes"]))
-        allocated_ram = round_ram_mb(predicted_ram * float(resources["safety_ram_multiplier"]), int(resources["min_ram_mb"]))
+        allocated_time_raw = round_time_minutes(predicted_time * float(resources["safety_time_multiplier"]), int(resources["min_time_minutes"]))
+        allocated_ram_raw = round_ram_gb(predicted_ram * float(resources["safety_ram_multiplier"]), float(resources["min_ram_gb"]))
+        max_time = int(resources["max_job_time_minutes"])
+        max_ram = int(resources.get("max_ram_gb", allocated_ram_raw))
+        limit_notes = []
+        if allocated_time_raw > max_time:
+            limit_notes.append("time_capped")
+        if allocated_ram_raw > max_ram:
+            limit_notes.append("ram_capped")
+        allocated_time = min(allocated_time_raw, max_time)
+        allocated_ram = min(allocated_ram_raw, max_ram)
+        resource_limit_status = "ok" if not limit_notes else ",".join(limit_notes)
+        if limit_notes:
+            reason = f"{reason}; {resource_limit_status}"
         predictions.append(
             {
                 "run_id": run["run_id"],
                 "param_set_id": run["param_set_id"],
                 "predicted_time_minutes": f"{predicted_time:.3f}",
-                "predicted_ram_mb": f"{predicted_ram:.3f}",
-                "allocated_time_minutes": min(allocated_time, int(resources["max_job_time_minutes"])),
-                "allocated_ram_mb": allocated_ram,
+                "predicted_ram_gb": f"{predicted_ram:.3f}",
+                "allocated_time_minutes": allocated_time,
+                "allocated_ram_gb": allocated_ram,
                 "allocated_cpus": int(config["slurm"]["cpus_per_task"]),
                 "resource_model_id": model_id,
                 "prediction_reason": reason,
+                "resource_limit_status": resource_limit_status,
             }
         )
     return predictions
@@ -167,10 +185,40 @@ def _feature_matrix(params_list: list[dict[str, Any]], feature_cfg: dict[str, An
 
 def _predict_from_model(model: dict[str, Any], params: dict[str, Any]) -> tuple[float, float]:
     names, matrix = _feature_matrix([params], model.get("features", {}))
-    values = {"intercept": 1.0, **dict(zip(names, matrix[0].tolist()))}
+    feature_values = dict(zip(names, matrix[0].tolist()))
+    scaling = model.get("feature_scaling")
+    if scaling:
+        feature_values = {
+            name: (feature_values.get(name, 0.0) - float(scaling.get(name, {}).get("mean", 0.0)))
+            / float(scaling.get(name, {}).get("scale", 1.0) or 1.0)
+            for name in model.get("feature_names", names)
+        }
+    values = {"intercept": 1.0, **feature_values}
     runtime_log = sum(float(coef) * values.get(name, 0.0) for name, coef in model["runtime_model"]["coefficients"].items())
     memory_log = sum(float(coef) * values.get(name, 0.0) for name, coef in model["memory_model"]["coefficients"].items())
-    return math.exp(runtime_log), math.exp(memory_log)
+    memory = math.exp(memory_log)
+    if model.get("memory_model", {}).get("response") == "log_max_rss_mb":
+        memory /= 1024.0
+    return math.exp(runtime_log), memory
+
+
+def _standardize_matrix(matrix: np.ndarray, feature_names: list[str]) -> tuple[np.ndarray, dict[str, dict[str, float]]]:
+    if matrix.shape[1] == 0:
+        return matrix, {}
+    means = matrix.mean(axis=0)
+    scales = matrix.std(axis=0)
+    scales = np.where(scales < 1e-12, 1.0, scales)
+    scaled = (matrix - means) / scales
+    return scaled, {
+        name: {"mean": float(mean), "scale": float(scale)}
+        for name, mean, scale in zip(feature_names, means.tolist(), scales.tolist())
+    }
+
+
+def _fit_ridge(x: np.ndarray, y: np.ndarray, ridge_lambda: float) -> np.ndarray:
+    penalty = np.eye(x.shape[1]) * ridge_lambda
+    penalty[0, 0] = 0.0
+    return np.linalg.solve(x.T @ x + penalty, x.T @ y)
 
 
 def _latest_attempts(config: dict[str, Any], run_ids: list[str]) -> dict[str, dict[str, Any]]:
@@ -188,4 +236,3 @@ def _latest_attempts(config: dict[str, Any], run_ids: list[str]) -> dict[str, di
             tuple(run_ids),
         )
     return {r["run_id"]: r for r in data}
-

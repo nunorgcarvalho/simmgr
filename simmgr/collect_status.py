@@ -38,7 +38,7 @@ def collect_status(
                 """
                 UPDATE attempts SET status = ?, started_at = COALESCE(?, started_at),
                   ended_at = COALESCE(?, ended_at), elapsed_seconds = COALESCE(?, elapsed_seconds),
-                  max_rss_mb = COALESCE(?, max_rss_mb), exit_code = COALESCE(?, exit_code),
+                  max_rss_gb = COALESCE(?, max_rss_gb), exit_code = COALESCE(?, exit_code),
                   exit_reason = COALESCE(?, exit_reason), updated_at = ?
                 WHERE attempt_id = ?
                 """,
@@ -47,7 +47,7 @@ def collect_status(
                     fields.get("started_at"),
                     fields.get("ended_at"),
                     fields.get("elapsed_seconds"),
-                    fields.get("max_rss_mb"),
+                    fields.get("max_rss_gb"),
                     fields.get("exit_code"),
                     fields.get("exit_reason"),
                     now,
@@ -72,8 +72,10 @@ def _classify(attempt: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     if metadata:
         fields["started_at"] = metadata.get("timestamp")
     for event in events:
-        if event.get("max_rss_mb") is not None:
-            fields["max_rss_mb"] = event.get("max_rss_mb")
+        if event.get("max_rss_gb") is not None:
+            fields["max_rss_gb"] = event.get("max_rss_gb")
+        elif event.get("max_rss_mb") is not None:
+            fields["max_rss_gb"] = float(event["max_rss_mb"]) / 1024.0
     terminal = next((e for e in reversed(events) if e.get("event") == "attempt_finished"), None)
     simulator_terminal = next((e for e in reversed(events) if e.get("event") == "simulator_finished"), None)
     if terminal:
@@ -94,4 +96,4 @@ def _classify(attempt: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
 
 def _known_slurm_fields(slurm: dict[str, Any]) -> dict[str, Any]:
-    return {key: slurm[key] for key in ["elapsed_seconds", "max_rss_mb", "exit_code"] if slurm.get(key) is not None}
+    return {key: slurm[key] for key in ["elapsed_seconds", "max_rss_gb", "exit_code"] if slurm.get(key) is not None}

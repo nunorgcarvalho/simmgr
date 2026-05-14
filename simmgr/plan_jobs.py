@@ -20,19 +20,20 @@ PREDICTION_COLUMNS = [
     "run_id",
     "param_set_id",
     "predicted_time_minutes",
-    "predicted_ram_mb",
+    "predicted_ram_gb",
     "allocated_time_minutes",
-    "allocated_ram_mb",
+    "allocated_ram_gb",
     "allocated_cpus",
     "resource_model_id",
     "prediction_reason",
+    "resource_limit_status",
 ]
 GROUP_COLUMNS = [
     "group_id",
     "run_id",
     "group_order",
     "allocated_time_minutes",
-    "allocated_ram_mb",
+    "allocated_ram_gb",
     "allocated_cpus",
     "predicted_run_time_minutes",
     "attempt_id",
@@ -40,7 +41,7 @@ GROUP_COLUMNS = [
 ARRAY_COLUMNS = [
     "array_id",
     "allocated_time_minutes",
-    "allocated_ram_mb",
+    "allocated_ram_gb",
     "allocated_cpus",
     "group_id",
     "array_task_index",
@@ -89,8 +90,9 @@ def plan_jobs(
     arrays = _make_arrays(config, groups)
     write_tsv(plan_dir / "arrays.tsv", arrays, ARRAY_COLUMNS)
     (plan_dir / "sbatch_commands.sh").write_text(_sbatch_commands(config, plan_id, arrays), encoding="utf-8")
+    capped_count = sum(1 for p in predictions if p.get("resource_limit_status") != "ok")
     (plan_dir / "plan_summary.txt").write_text(
-        f"plan_id: {plan_id}\ncreated_at: {utc_now()}\nselected_runs: {len(selected)}\ngroups: {len({g['group_id'] for g in groups})}\narrays: {len({a['array_id'] for a in arrays})}\n",
+        f"plan_id: {plan_id}\ncreated_at: {utc_now()}\nselected_runs: {len(selected)}\ngroups: {len({g['group_id'] for g in groups})}\narrays: {len({a['array_id'] for a in arrays})}\nresource_capped_runs: {capped_count}\n",
         encoding="utf-8",
     )
     with connect(configured_path(config, "registry_dir") / "simmgr.sqlite") as conn:
@@ -127,7 +129,7 @@ def _make_groups(config: dict[str, Any], predictions: list[dict[str, Any]]) -> l
     max_minutes = int(config["resources"]["max_job_time_minutes"])
     buckets: dict[tuple[int, int], list[dict[str, Any]]] = defaultdict(list)
     for pred in predictions:
-        buckets[(int(pred["allocated_ram_mb"]), int(pred["allocated_cpus"]))].append(pred)
+        buckets[(int(pred["allocated_ram_gb"]), int(pred["allocated_cpus"]))].append(pred)
     rows: list[dict[str, Any]] = []
     group_number = 0
     for (_ram, _cpus), preds in sorted(buckets.items()):
@@ -158,7 +160,7 @@ def _group_rows(config: dict[str, Any], group_number: int, preds: list[dict[str,
             "run_id": pred["run_id"],
             "group_order": i,
             "allocated_time_minutes": group_time,
-            "allocated_ram_mb": pred["allocated_ram_mb"],
+            "allocated_ram_gb": pred["allocated_ram_gb"],
             "allocated_cpus": pred["allocated_cpus"],
             "predicted_run_time_minutes": pred["predicted_time_minutes"],
             "attempt_id": "",
@@ -173,7 +175,7 @@ def _make_arrays(config: dict[str, Any], groups: list[dict[str, Any]]) -> list[d
         by_group.setdefault(row["group_id"], row)
     buckets: dict[tuple[int, int, int], list[str]] = defaultdict(list)
     for group_id, row in by_group.items():
-        buckets[(int(row["allocated_time_minutes"]), int(row["allocated_ram_mb"]), int(row["allocated_cpus"]))].append(group_id)
+        buckets[(int(row["allocated_time_minutes"]), int(row["allocated_ram_gb"]), int(row["allocated_cpus"]))].append(group_id)
     rows: list[dict[str, Any]] = []
     array_number = 0
     max_array = int(config["slurm"].get("max_array_size", 1000))
@@ -186,7 +188,7 @@ def _make_arrays(config: dict[str, Any], groups: list[dict[str, Any]]) -> list[d
                     {
                         "array_id": array_id,
                         "allocated_time_minutes": time,
-                        "allocated_ram_mb": ram,
+                        "allocated_ram_gb": ram,
                         "allocated_cpus": cpus,
                         "group_id": group_id,
                         "array_task_index": index,
@@ -221,7 +223,7 @@ def _sbatch_commands(config: dict[str, Any], plan_id: str, arrays: list[dict[str
             "sbatch"
             f" --partition={config['slurm']['partition']}{account}"
             f" --cpus-per-task={row['allocated_cpus']}"
-            f" --mem={int(row['allocated_ram_mb']) // 1024}G"
+            f" --mem={int(row['allocated_ram_gb'])}G"
             f" --time={_slurm_time(int(row['allocated_time_minutes']))}"
             f" --array=1-{task_count}"
             f" --job-name=simmgr_{plan_id}_{array_id}"

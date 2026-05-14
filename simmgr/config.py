@@ -17,9 +17,10 @@ DEFAULT_GLOBAL_CONFIG: dict[str, Any] = {
     "resource_defaults": {
         "max_job_time_minutes": 720,
         "default_time_minutes": 60,
-        "default_ram_mb": 16000,
+        "default_ram_gb": 16,
         "min_time_minutes": 5,
-        "min_ram_mb": 1000,
+        "min_ram_gb": 1,
+        "max_ram_gb": 128,
         "safety_time_multiplier": 1.25,
         "safety_ram_multiplier": 1.25,
         "oom_retry_multiplier": 2.0,
@@ -141,4 +142,3 @@ def make_default_project_config(project_root: Path, global_config: dict[str, Any
         "resources": resources,
         "paths": paths,
     }
-

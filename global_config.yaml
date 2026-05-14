@@ -9,9 +9,10 @@ slurm_defaults:
 resource_defaults:
   max_job_time_minutes: 720
   default_time_minutes: 10
-  default_ram_mb: 2048
+  default_ram_gb: 2
   min_time_minutes: 5
-  min_ram_mb: 1000
+  min_ram_gb: 1
+  max_ram_gb: 128
   safety_time_multiplier: 1.25
   safety_ram_multiplier: 1.25
   oom_retry_multiplier: 2.0
@@ -26,4 +27,3 @@ path_defaults:
   pilot_sets_dir: pilot_sets
   resource_models_dir: resource_models
   state_dir: state
-

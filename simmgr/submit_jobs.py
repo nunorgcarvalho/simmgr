@@ -87,7 +87,7 @@ def _build_sbatch_command(config: dict[str, Any], plan_id: str, array_id: str, a
         "sbatch",
         f"--partition={config['slurm']['partition']}",
         f"--cpus-per-task={first['allocated_cpus']}",
-        f"--mem={int(first['allocated_ram_mb']) // 1024}G",
+        f"--mem={int(float(first['allocated_ram_gb']))}G",
         f"--time={_slurm_time(int(first['allocated_time_minutes']))}",
         f"--array=1-{task_count}",
         f"--job-name=simmgr_{plan_id}_{array_id}",
@@ -131,7 +131,7 @@ def _create_attempts(
                     INSERT INTO attempts(
                       attempt_id, run_id, param_set_id, replicate, attempt, status, plan_id, group_id,
                       array_id, slurm_job_id, slurm_array_task_id, allocated_time_minutes,
-                      allocated_ram_mb, allocated_cpus, attempt_log_path, created_at, submitted_at, updated_at
+                      allocated_ram_gb, allocated_cpus, attempt_log_path, created_at, submitted_at, updated_at
                     ) VALUES (?, ?, ?, ?, ?, 'submitted', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
@@ -146,7 +146,7 @@ def _create_attempts(
                         slurm_job_id,
                         array_row["array_task_index"],
                         int(group_row["allocated_time_minutes"]),
-                        int(group_row["allocated_ram_mb"]),
+                        float(group_row["allocated_ram_gb"]),
                         int(group_row["allocated_cpus"]),
                         str(log_path),
                         now,

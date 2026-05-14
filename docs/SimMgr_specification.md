@@ -232,9 +232,10 @@ slurm_defaults:
 resource_defaults:
   max_job_time_minutes: 720
   default_time_minutes: 60
-  default_ram_mb: 16000
+  default_ram_gb: 16
   min_time_minutes: 5
-  min_ram_mb: 1000
+  min_ram_gb: 1
+  max_ram_gb: 128
   safety_time_multiplier: 1.25
   safety_ram_multiplier: 1.25
   oom_retry_multiplier: 2.0
@@ -324,9 +325,10 @@ slurm:
 resources:
   max_job_time_minutes: 720
   default_time_minutes: 60
-  default_ram_mb: 16000
+  default_ram_gb: 16
   min_time_minutes: 5
-  min_ram_mb: 1000
+  min_ram_gb: 1
+  max_ram_gb: 128
   safety_time_multiplier: 1.25
   safety_ram_multiplier: 1.25
   oom_retry_multiplier: 2.0
@@ -779,7 +781,7 @@ Required columns:
 | `slurm_job_id` | Slurm job ID, once submitted |
 | `slurm_array_task_id` | Slurm array task ID, if applicable |
 | `allocated_time_minutes` | Time requested from Slurm |
-| `allocated_ram_mb` | Memory requested from Slurm |
+| `allocated_ram_gb` | Memory requested from Slurm, in GB |
 | `allocated_cpus` | CPUs requested |
 | `attempt_log_path` | JSONL log path |
 | `created_at` | Attempt creation timestamp |
@@ -787,7 +789,7 @@ Required columns:
 | `started_at` | Attempt start timestamp, if known |
 | `ended_at` | Attempt end timestamp, if known |
 | `elapsed_seconds` | Runtime if known |
-| `max_rss_mb` | Maximum RSS if known |
+| `max_rss_gb` | Maximum RSS if known, in GB |
 | `exit_code` | Process exit code if known |
 | `exit_reason` | Slurm or SimMgr failure reason |
 | `updated_at` | Last update timestamp |
@@ -1332,7 +1334,7 @@ SimMgr should write the first event before calling the simulator.
 Example:
 
 ```json
-{"event":"attempt_metadata","attempt_id":"8f3a91c4e2b7_r2_a3","attempt":3,"run_id":"8f3a91c4e2b7_r2","param_set_id":"8f3a91c4e2b7","replicate":2,"params":{"N":100000,"h2":0.2,"num_variants":50000,"simulator_version":1},"seed":812381,"allocated_time_minutes":60,"allocated_ram_mb":16000}
+{"event":"attempt_metadata","attempt_id":"8f3a91c4e2b7_r2_a3","attempt":3,"run_id":"8f3a91c4e2b7_r2","param_set_id":"8f3a91c4e2b7","replicate":2,"params":{"N":100000,"h2":0.2,"num_variants":50000,"simulator_version":1},"seed":812381,"allocated_time_minutes":60,"allocated_ram_gb":16}
 ```
 
 This event should include:
@@ -1461,14 +1463,14 @@ Fit separate models for:
 
 ```text
 runtime_seconds
-max_rss_mb
+max_rss_gb
 ```
 
 Prefer log-scale models:
 
 ```text
 log(runtime_seconds)
-log(max_rss_mb)
+log(max_rss_gb)
 ```
 
 Candidate features may include:
@@ -1523,7 +1525,7 @@ Example structure:
     "residual_sd": 0.42
   },
   "memory_model": {
-    "response": "log_max_rss_mb",
+    "response": "log_max_rss_gb",
     "coefficients": {
       "intercept": 4.10,
       "log_N": 0.52,
@@ -1555,12 +1557,13 @@ Required columns:
 | `run_id` | Logical run ID |
 | `param_set_id` | Parameter set ID |
 | `predicted_time_minutes` | Continuous prediction |
-| `predicted_ram_mb` | Continuous prediction |
+| `predicted_ram_gb` | Continuous prediction, in GB |
 | `allocated_time_minutes` | Rounded Slurm time |
-| `allocated_ram_mb` | Rounded Slurm memory |
+| `allocated_ram_gb` | Rounded Slurm memory, in GB |
 | `allocated_cpus` | CPUs |
 | `resource_model_id` | Model used |
 | `prediction_reason` | learned model, fallback, retry after OOM, retry after timeout, etc. |
+| `resource_limit_status` | `ok`, `ram_capped`, `time_capped`, or both if planning ceilings were applied |
 
 When attempts are created, allocated resource fields are copied into the SQLite `attempts` table.
 
@@ -1591,7 +1594,7 @@ Minimums should be enforced:
 
 ```text
 allocated_time >= min_time_minutes
-allocated_ram >= min_ram_mb
+allocated_ram >= min_ram_gb
 ```
 
 Maximums should be enforced or flagged:
@@ -1643,7 +1646,7 @@ slurm:
 A resource bucket is the tuple:
 
 ```text
-allocated_time_minutes + allocated_ram_mb + allocated_cpus
+allocated_time_minutes + allocated_ram_gb + allocated_cpus
 ```
 
 ---
@@ -1672,7 +1675,7 @@ Runs can be grouped when they have compatible resource needs.
 
 For v1:
 
-- group only runs with the same `allocated_ram_mb`;
+- group only runs with the same `allocated_ram_gb`;
 - group only runs with the same `allocated_cpus`;
 - group runs so that total predicted time plus safety does not exceed `max_job_time_minutes`;
 - assign group time based on summed predicted/allocated run times, rounded to the time ladder;
@@ -1729,7 +1732,7 @@ Required columns:
 | `run_id` | Run assigned to group |
 | `group_order` | Order within group |
 | `allocated_time_minutes` | Group time allocation |
-| `allocated_ram_mb` | Group memory allocation |
+| `allocated_ram_gb` | Group memory allocation, in GB |
 | `allocated_cpus` | Group CPUs |
 | `predicted_run_time_minutes` | Predicted time for individual run |
 | `attempt_id` | Blank until submission if attempts are created then |
@@ -1748,7 +1751,7 @@ Required columns:
 |---|---|
 | `array_id` | SimMgr array ID within plan |
 | `allocated_time_minutes` | Array time |
-| `allocated_ram_mb` | Array memory |
+| `allocated_ram_gb` | Array memory, in GB |
 | `allocated_cpus` | Array CPUs |
 | `group_id` | Group assigned to this array |
 | `array_task_index` | Task index within array |

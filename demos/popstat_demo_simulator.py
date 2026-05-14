@@ -69,7 +69,7 @@ def main() -> int:
                 "event": "simulator_finished",
                 "status": "succeeded",
                 "elapsed_seconds": time.time() - start,
-                "max_rss_mb": 256 + n * m / 5000,
+                "max_rss_gb": 0.25 + n * m / 5_000_000,
             },
         )
         return 0
@@ -80,4 +80,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

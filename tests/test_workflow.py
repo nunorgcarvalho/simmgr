@@ -16,6 +16,7 @@ from simmgr.plan_jobs import plan_jobs
 from simmgr.registry import connect
 from simmgr.run_group import run_group
 from simmgr.submit_jobs import submit_jobs
+from simmgr.tsv import read_tsv
 
 
 def test_manifest_registry_plan_and_local_execution(tmp_path: Path, monkeypatch) -> None:
@@ -34,7 +35,7 @@ def test_manifest_registry_plan_and_local_execution(tmp_path: Path, monkeypatch)
             args = parser.parse_args()
             Path(args.output_dir).mkdir(parents=True, exist_ok=True)
             with open(args.log_path, "a", encoding="utf-8") as handle:
-                handle.write(json.dumps({"event": "simulator_finished", "status": "succeeded", "max_rss_mb": 123.0}) + "\\n")
+                handle.write(json.dumps({"event": "simulator_finished", "status": "succeeded", "max_rss_gb": 1.25}) + "\\n")
             """
         ),
         encoding="utf-8",
@@ -50,6 +51,9 @@ def test_manifest_registry_plan_and_local_execution(tmp_path: Path, monkeypatch)
     assert summary["new_run_count"] == 8
 
     plan_dir = plan_jobs(config_path, where="replicate == 1", generous_resources=True)
+    predictions = read_tsv(plan_dir / "resource_predictions.tsv")
+    assert "allocated_ram_gb" in predictions[0]
+    assert "allocated_ram_mb" not in predictions[0]
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     sbatch = fake_bin / "sbatch"
@@ -84,3 +88,17 @@ def test_overlapping_manifest_ingest_records_membership(tmp_path: Path) -> None:
         memberships = conn.execute("SELECT COUNT(*) FROM manifest_runs").fetchone()[0]
     assert memberships == 16
 
+
+def test_ram_predictions_are_capped_in_gb(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    init_project(project)
+    config_path = project / "project_config.yaml"
+    text = config_path.read_text(encoding="utf-8")
+    text = text.replace("max_ram_gb: 128", "max_ram_gb: 2")
+    config_path.write_text(text, encoding="utf-8")
+    manifest = build_manifest(config_path)
+    ingest_manifest(config_path, manifest)
+    plan_dir = plan_jobs(config_path, where="replicate == 1", generous_resources=True)
+    predictions = read_tsv(plan_dir / "resource_predictions.tsv")
+    assert {row["allocated_ram_gb"] for row in predictions} == {"2"}
+    assert {row["resource_limit_status"] for row in predictions} == {"ram_capped"}

@@ -36,7 +36,7 @@ def sacct_attempt_info(slurm_job_id: str | None, array_task_id: str | None = Non
             "slurm_state": state,
             "exit_code": _parse_exit_code(exit_code),
             "elapsed_seconds": float(elapsed_raw) if elapsed_raw.isdigit() else None,
-            "max_rss_mb": _parse_max_rss_mb(max_rss),
+            "max_rss_gb": _parse_max_rss_gb(max_rss),
         }
     return {}
 
@@ -65,12 +65,11 @@ def _parse_exit_code(value: str) -> int | None:
     return int(head) if head.isdigit() else None
 
 
-def _parse_max_rss_mb(value: str) -> float | None:
+def _parse_max_rss_gb(value: str) -> float | None:
     match = re.fullmatch(r"([0-9.]+)([KMGTP]?)", value.strip())
     if not match:
         return None
     number = float(match.group(1))
     unit = match.group(2)
-    factors = {"": 1 / (1024 * 1024), "K": 1 / 1024, "M": 1, "G": 1024, "T": 1024 * 1024, "P": 1024 * 1024 * 1024}
+    factors = {"": 1 / (1024 * 1024 * 1024), "K": 1 / (1024 * 1024), "M": 1 / 1024, "G": 1, "T": 1024, "P": 1024 * 1024}
     return number * factors[unit]
-
