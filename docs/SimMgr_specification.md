@@ -8,7 +8,7 @@ SimMgr is intended for projects where a researcher already has project-specific 
 
 - simulation manifests;
 - stable simulation identifiers;
-- registries of logical runs and execution attempts;
+- a persistent SQLite registry of parameter sets, logical runs, and execution attempts;
 - Slurm planning, grouping, arrays, and submission;
 - per-attempt JSONL logging;
 - failure classification;
@@ -31,7 +31,7 @@ SimMgr is responsible for:
 - creating project directory structure;
 - reading project configuration;
 - building simulation manifests from a simulation specification;
-- ingesting manifests into persistent registries;
+- ingesting manifests into the persistent SQLite registry;
 - assigning stable IDs;
 - selecting runs;
 - predicting resources;
@@ -41,7 +41,7 @@ SimMgr is responsible for:
 - submitting jobs;
 - wrapping simulator execution;
 - collecting Slurm and simulator status;
-- updating run and attempt registries;
+- updating run and attempt registry tables;
 - fitting resource prediction models.
 
 The project-specific simulator is responsible for:
@@ -59,7 +59,7 @@ Project-specific result summarization is not part of core SimMgr. A project may 
 
 Every generated manifest is immutable. If the user changes the desired simulation space, SimMgr creates a new manifest rather than overwriting a previous one.
 
-Manifests may overlap with previous manifests. Ingesting a manifest adds only new unique logical runs to the registry.
+Manifests may overlap with previous manifests. Ingesting a manifest adds only new unique logical runs to the registry, while also recording that already-existing runs appeared in the new manifest.
 
 ---
 
@@ -84,9 +84,9 @@ Retries do not create new manifests and do not create new logical runs. They cre
 
 ---
 
-### 2.4 Text-first storage
+### 2.4 Text-first storage with a SQLite registry
 
-SimMgr v1 should avoid SQLite, Parquet, pickle, and other opaque formats.
+SimMgr should use text-first storage for files that users inspect or edit, but the mutable registry should be SQLite.
 
 Use:
 
@@ -95,7 +95,8 @@ Use:
 | Human-edited configs | YAML |
 | Simulation specification | YAML |
 | Manifests | TSV |
-| Registries | TSV |
+| Registry of parameter sets, runs, attempts, and manifest membership | SQLite |
+| Optional registry exports | TSV |
 | Plans | TSV plus shell scripts |
 | Logs | JSONL |
 | Resource models | JSON |
@@ -103,15 +104,32 @@ Use:
 | Pilot sets | TSV |
 | Large project-specific outputs | Project-defined; referenced from JSONL logs |
 
-The only exception is that project-specific scientific outputs may use formats appropriate to the project. SimMgr should not assume or parse those files unless directed by the project-specific simulator or summarizer.
+SQLite should be used only for the registry, not for manifests, plans, logs, resource models, or project-specific scientific outputs.
+
+The registry database should live at:
+
+```text
+registry/simmgr.sqlite
+```
+
+SimMgr should provide a way to export registry tables to human-readable TSV snapshots, for example:
+
+```text
+registry/exports/param_sets.tsv
+registry/exports/runs.tsv
+registry/exports/attempts.tsv
+registry/exports/manifest_runs.tsv
+```
+
+The only exception to text-first storage outside the registry is that project-specific scientific outputs may use formats appropriate to the project. SimMgr should not assume or parse those files unless directed by the project-specific simulator or summarizer.
 
 ---
 
 ### 2.5 No silent overwriting
 
-SimMgr should never overwrite previous manifests, plans, logs, resource models, or successful results without explicit user instruction.
+SimMgr should never overwrite previous manifests, plans, logs, resource models, registry exports, or successful results without explicit user instruction.
 
-Registry TSV files are mutable by design, but updates should be atomic.
+The SQLite registry is mutable by design, but updates must happen through transactions. Operations that update multiple registry tables should be atomic: either all related changes are committed, or none are.
 
 ---
 
@@ -124,6 +142,20 @@ SimMgr should not infer that a missing parameter is equivalent to a newly added 
 If the user adds a new simulation parameter to the specification, new parameter hashes are expected.
 
 If the user changes scientific behavior of the simulator, they should increment `simulator_version` in `simulation_spec.yaml`; since `simulator_version` is treated as an ordinary simulation parameter, this changes hashes.
+
+---
+
+### 2.7 Avoid registry writes from Slurm worker jobs
+
+For v1, Slurm worker processes should not write to the SQLite registry. This avoids concurrent writes from many cluster jobs and avoids potential filesystem-locking problems on shared cluster storage.
+
+Specifically:
+
+- `submit-jobs` creates attempt rows and records Slurm job IDs.
+- `run-group` and `run-one`, which execute inside Slurm jobs, write JSONL logs only.
+- `collect-status`, run later by the user or driver process, reads logs and Slurm accounting, then updates the SQLite registry.
+
+This design keeps SQLite as a robust single-writer registry while preserving scalable Slurm execution.
 
 ---
 
@@ -153,10 +185,12 @@ SimMgr/
     run_group.py
     run_one.py
     collect_status.py
+    export_registry.py
 
     ids.py
     canonicalize.py
-    registries.py
+    registry.py
+    registry_schema.py
     resources.py
     slurm.py
     logging_utils.py
@@ -241,9 +275,8 @@ This creates:
 
   manifests/
   registry/
-    param_sets.tsv
-    runs.tsv
-    attempts.tsv
+    simmgr.sqlite
+    exports/
 
   pilot_sets/
     pilot_001.tsv
@@ -293,9 +326,9 @@ resources:
   default_time_minutes: 60
   default_ram_mb: 16000
   min_time_minutes: 5
-  min_ram_mb: 2000
-  safety_time_multiplier: 1.5
-  safety_ram_multiplier: 1.5
+  min_ram_mb: 1000
+  safety_time_multiplier: 1.25
+  safety_ram_multiplier: 1.25
   oom_retry_multiplier: 2.0
   timeout_retry_multiplier: 2.0
 
@@ -309,6 +342,12 @@ paths:
   pilot_sets_dir: pilot_sets
   resource_models_dir: resource_models
   state_dir: state
+```
+
+The registry path is derived from `project_root` and `paths.registry_dir`:
+
+```text
+<project_root>/<registry_dir>/simmgr.sqlite
 ```
 
 If a SimMgr command is not passed `--project-config`, it may use `default_project_config` from the global config. The user is responsible for updating the global default when switching projects.
@@ -336,6 +375,8 @@ Example:
 ```
 
 This file is machine-managed and should be updated atomically.
+
+Do not store attempt counters in `simmgr_state.json`. Attempt numbers should be derived transactionally from the SQLite registry for each `run_id`.
 
 ---
 
@@ -404,7 +445,8 @@ For each simulation set:
 5. Create one logical run per replicate.
 
 The manifest builder should produce fully explicit parameter JSON for each parameter set based on the current spec.
-To be clear, a simulation set is simply a group of variable lists that are expanded grid-like. The combinations of parameters in each grid are then appended together across grids to produce a single manifest.
+
+A simulation set is simply a group of variable lists that are expanded grid-like. The combinations of parameters in each grid are then appended together across grids to produce a single manifest.
 
 ---
 
@@ -493,7 +535,7 @@ Example:
 8f3a91c4e2b7_r2_a3
 ```
 
-Attempt numbers are assigned by the registry:
+Attempt numbers are assigned by the SQLite registry inside a transaction:
 
 ```text
 attempt = 1 + max(previous attempt for this run_id)
@@ -525,7 +567,7 @@ unless a future explicit hash-equivalence feature is added. For v1, no such equi
 
 ---
 
-## 6. Persistent Data Files
+## 6. Persistent Data Files and SQLite Registry
 
 ### 6.1 Manifests
 
@@ -562,7 +604,81 @@ A manifest may contain parameter sets and runs already present in previous manif
 
 ---
 
-### 6.2 `registry/param_sets.tsv`
+### 6.2 Registry database
+
+The registry is a SQLite database:
+
+```text
+registry/simmgr.sqlite
+```
+
+The registry is the source of truth for:
+
+- unique parameter sets ever ingested;
+- unique logical runs ever ingested;
+- execution attempts;
+- manifest ingestion metadata;
+- run membership in manifests;
+- current summarized status of each logical run.
+
+The database should be initialized by `simmgr init` and migrated by SimMgr if future schema versions are introduced.
+
+Recommended SQLite settings:
+
+- Enable foreign keys on every connection: `PRAGMA foreign_keys = ON`.
+- Store a registry schema version using `PRAGMA user_version` and/or a `registry_metadata` table.
+- Use transactions for every operation that updates more than one table.
+- Avoid many concurrent writers; Slurm workers should not write to the registry.
+- Use a reasonable SQLite busy timeout for command-line robustness.
+- Do not assume WAL mode is safe on every cluster filesystem. Default SQLite journaling is acceptable for v1 unless the user explicitly enables WAL after verifying filesystem support.
+
+---
+
+### 6.3 `registry_metadata` table
+
+Stores metadata about the registry itself.
+
+Required fields, represented either as key-value rows or explicit columns:
+
+| Field | Meaning |
+|---|---|
+| `schema_version` | Integer schema version |
+| `created_at` | Timestamp database was created |
+| `updated_at` | Timestamp database metadata was last updated |
+| `simmgr_version` | SimMgr version that created or last migrated the registry, if available |
+
+A simple key-value table is acceptable:
+
+| Column | Meaning |
+|---|---|
+| `key` | Metadata key |
+| `value` | Metadata value |
+
+---
+
+### 6.4 `manifest_files` table
+
+One row per manifest file that has been ingested or registered.
+
+Required columns:
+
+| Column | Meaning |
+|---|---|
+| `manifest_id` | Primary key, for example `manifest_001` |
+| `manifest_path` | Path to manifest TSV |
+| `created_at` | Timestamp from manifest creation if available |
+| `ingested_at` | Timestamp ingested into registry |
+| `spec_path` | Path to simulation spec used, if known |
+| `spec_hash` | Hash of simulation spec file, if known |
+| `simmgr_version` | SimMgr version, if known |
+| `row_count` | Number of rows in manifest |
+| `new_param_set_count` | Number of newly inserted parameter sets |
+| `new_run_count` | Number of newly inserted logical runs |
+| `notes` | Optional notes |
+
+---
+
+### 6.5 `param_sets` table
 
 One row per unique parameter set ever ingested.
 
@@ -570,23 +686,25 @@ Required columns:
 
 | Column | Meaning |
 |---|---|
-| `param_set_id` | Hash of canonical params JSON |
+| `param_set_id` | Primary key; hash of canonical params JSON |
 | `params_json` | Canonical JSON |
 | `first_manifest_id` | First manifest where this parameter set appeared |
-| `first_seen_at` | Timestamp ingested |
-
-Optional columns:
-
-| Column | Meaning |
-|---|---|
-| `last_manifest_id` | Most recent manifest where seen |
+| `last_manifest_id` | Most recent manifest where this parameter set appeared |
+| `first_seen_at` | Timestamp first ingested |
+| `updated_at` | Last registry update timestamp |
 | `notes` | Optional notes |
 
-Existing rows should not be modified except possibly to update `last_manifest_id` or add notes.
+Constraints and indexes:
+
+- `param_set_id` is the primary key.
+- `params_json` should be unique if practical.
+- `first_manifest_id` and `last_manifest_id` may reference `manifest_files.manifest_id`.
+
+Existing rows should not be modified except to update `last_manifest_id`, `updated_at`, or notes.
 
 ---
 
-### 6.3 `registry/runs.tsv`
+### 6.6 `runs` table
 
 One row per unique logical run.
 
@@ -594,15 +712,17 @@ Required columns:
 
 | Column | Meaning |
 |---|---|
-| `run_id` | `<param_set_id>_r<replicate>` |
-| `param_set_id` | Hash of canonical params JSON |
+| `run_id` | Primary key; `<param_set_id>_r<replicate>` |
+| `param_set_id` | Foreign key to `param_sets.param_set_id` |
 | `replicate` | Replicate number |
 | `status` | Current logical-run status |
-| `attempt_count` | Number of attempts created for this run |
+| `attempt_count` | Number of attempts created for this run; can be cached or recomputed |
 | `best_attempt_id` | Best/current attempt ID, if any |
 | `first_manifest_id` | First manifest where this run appeared |
-| `first_seen_at` | Timestamp ingested |
+| `last_manifest_id` | Most recent manifest where this run appeared |
+| `first_seen_at` | Timestamp first ingested |
 | `updated_at` | Last registry update timestamp |
+| `notes` | Optional notes |
 
 Suggested status values:
 
@@ -621,17 +741,25 @@ failed_unknown
 excluded
 ```
 
-The run status summarizes the logical run. Detailed execution history is in `attempts.tsv`.
+The run status summarizes the logical run. Detailed execution history is in the `attempts` table.
 
 Best attempt default logic:
 
 - If one or more attempts succeeded, `best_attempt_id` is the most recent successful attempt.
 - Otherwise, `best_attempt_id` is the most recent attempt.
-- If no attempt has been created, leave blank.
+- If no attempt has been created, leave blank or null.
+
+Constraints and indexes:
+
+- `run_id` is the primary key.
+- `param_set_id` references `param_sets.param_set_id`.
+- `(param_set_id, replicate)` should be unique.
+- Index `status` for common queries.
+- Index `first_manifest_id` and `last_manifest_id` if manifest filtering is common.
 
 ---
 
-### 6.4 `registry/attempts.tsv`
+### 6.7 `attempts` table
 
 One row per execution attempt.
 
@@ -639,11 +767,11 @@ Required columns:
 
 | Column | Meaning |
 |---|---|
-| `attempt_id` | `<run_id>_a<attempt>` |
+| `attempt_id` | Primary key; `<run_id>_a<attempt>` |
 | `run_id` | Logical run ID |
-| `param_set_id` | Parameter set ID |
-| `replicate` | Replicate number |
-| `attempt` | Attempt number |
+| `param_set_id` | Parameter set ID, denormalized for convenience |
+| `replicate` | Replicate number, denormalized for convenience |
+| `attempt` | Integer attempt number |
 | `status` | Attempt status |
 | `plan_id` | Plan that created this attempt |
 | `group_id` | Group containing this attempt |
@@ -655,6 +783,7 @@ Required columns:
 | `allocated_cpus` | CPUs requested |
 | `attempt_log_path` | JSONL log path |
 | `created_at` | Attempt creation timestamp |
+| `submitted_at` | Submission timestamp, if known |
 | `started_at` | Attempt start timestamp, if known |
 | `ended_at` | Attempt end timestamp, if known |
 | `elapsed_seconds` | Runtime if known |
@@ -677,21 +806,99 @@ failed_simulator_error
 failed_validation
 failed_unknown
 not_started_due_to_group_failure
+submission_failed
 ```
+
+Constraints and indexes:
+
+- `attempt_id` is the primary key.
+- `run_id` references `runs.run_id`.
+- `param_set_id` references `param_sets.param_set_id`.
+- `(run_id, attempt)` should be unique.
+- Index `run_id`.
+- Index `status`.
+- Index `plan_id`.
+- Index `slurm_job_id`.
+
+Attempt-number assignment must be done in a transaction to avoid duplicate attempt numbers.
 
 ---
 
-### 6.5 Atomic TSV updates
+### 6.8 `manifest_runs` table
 
-Because SimMgr v1 uses TSV registries, updates should be atomic:
+Records which logical runs appeared in which manifest. This preserves manifest overlap history even when runs already existed before a manifest was ingested.
 
-1. Read current TSV.
-2. Modify in memory.
-3. Write to a temporary file in the same directory.
-4. Validate required columns and uniqueness constraints.
-5. Rename temporary file over original file atomically.
+Required columns:
 
-Avoid partial registry writes.
+| Column | Meaning |
+|---|---|
+| `manifest_id` | Manifest ID |
+| `run_id` | Logical run ID |
+| `param_set_id` | Parameter set ID |
+| `replicate` | Replicate number |
+| `simulation_set_name` | Name or auto-generated set name from manifest |
+| `params_json` | Canonical JSON as it appeared in the manifest |
+| `created_at` | Manifest row creation timestamp if available |
+| `ingested_at` | Timestamp row was ingested |
+
+Constraints and indexes:
+
+- Primary key should be `(manifest_id, run_id)`.
+- `manifest_id` references `manifest_files.manifest_id`.
+- `run_id` references `runs.run_id`.
+- Index `run_id` for tracing where a run appeared.
+- Index `param_set_id` for parameter-set tracing.
+
+---
+
+### 6.9 Optional `plans` table
+
+Plan details are primarily stored as immutable files in `plans/plan_XXX/`. A lightweight registry table for plan metadata is optional but useful.
+
+Optional columns:
+
+| Column | Meaning |
+|---|---|
+| `plan_id` | Primary key, for example `plan_007` |
+| `plan_path` | Path to plan directory |
+| `created_at` | Timestamp created |
+| `submitted_at` | Timestamp submitted, if submitted |
+| `status` | created, submitted, partially_submitted, cancelled, etc. |
+| `selection_summary` | Short text or JSON summary |
+| `resource_model_id` | Resource model used, if any |
+| `notes` | Optional notes |
+
+This table is not required for v1 if attempts and plan files contain sufficient information, but Codex may implement it if convenient.
+
+---
+
+### 6.10 Registry exports
+
+The SQLite registry should be inspectable. SimMgr should include an export command that writes TSV snapshots, for example:
+
+```text
+registry/exports/param_sets.tsv
+registry/exports/runs.tsv
+registry/exports/attempts.tsv
+registry/exports/manifest_files.tsv
+registry/exports/manifest_runs.tsv
+```
+
+Exports are not the source of truth. They are snapshots for inspection, sharing, or debugging.
+
+Export files should include a timestamp or be overwritten only by explicit command. Either of these patterns is acceptable:
+
+```text
+registry/exports/runs.tsv
+```
+
+or:
+
+```text
+registry/exports/2026-05-13_120000/runs.tsv
+```
+
+The timestamped-directory approach is more consistent with the no-silent-overwriting principle.
 
 ---
 
@@ -709,7 +916,7 @@ Purpose:
 - create default project config from global defaults;
 - create default `simulation_spec.yaml`;
 - create directory structure;
-- create empty registry TSVs;
+- create and initialize `registry/simmgr.sqlite`;
 - create `state/simmgr_state.json`;
 - create `pilot_sets/pilot_001.tsv` with only a `run_id` header.
 
@@ -726,11 +933,16 @@ Outputs:
 project_config.yaml
 simulation_spec.yaml
 state/simmgr_state.json
-registry/param_sets.tsv
-registry/runs.tsv
-registry/attempts.tsv
+registry/simmgr.sqlite
+registry/exports/
 pilot_sets/pilot_001.tsv
 ```
+
+Behavior:
+
+- Create all registry tables and indexes.
+- Set the registry schema version.
+- Refuse to overwrite an existing initialized project unless explicitly requested.
 
 ---
 
@@ -762,7 +974,7 @@ manifests/manifest_XXX.tsv
 Behavior:
 
 - Increment manifest counter in `state/simmgr_state.json`.
-- Do not modify registries.
+- Do not modify the SQLite registry.
 - Do not execute simulations.
 - Do not overwrite prior manifests.
 
@@ -773,10 +985,12 @@ Behavior:
 Purpose:
 
 - read a manifest;
-- add new parameter sets to `registry/param_sets.tsv`;
-- add new logical runs to `registry/runs.tsv`;
-- ignore existing parameter sets and runs;
-- update registry timestamps and first/last manifest references as appropriate.
+- record the manifest file in `manifest_files`;
+- add new parameter sets to `param_sets`;
+- add new logical runs to `runs`;
+- record all manifest-run memberships in `manifest_runs`, including overlaps with existing runs;
+- ignore existing parameter sets and runs for insertion purposes;
+- update `last_manifest_id` and timestamps for existing parameter sets/runs that reappear.
 
 Inputs:
 
@@ -788,12 +1002,12 @@ Inputs:
 Outputs:
 
 ```text
-updated registry/param_sets.tsv
-updated registry/runs.tsv
+updated registry/simmgr.sqlite
 ```
 
 Behavior:
 
+- Use a single transaction for the whole manifest ingestion.
 - Do not create attempts.
 - Do not update resources.
 - Do not alter old run IDs.
@@ -820,6 +1034,7 @@ params.N >= 100000
 params.h2 == 0.2
 params.architecture == "polygenic"
 first_manifest_id == "manifest_003"
+attempt_count == 0
 ```
 
 Outputs may be:
@@ -832,9 +1047,12 @@ or
 user-specified TSV
 ```
 
-Implementation can parse TSV registries into memory and evaluate filters in Python.
+Implementation details:
 
-Do not use SQLite for v1.
+- Query `runs`, `param_sets`, and optionally `attempts` and `manifest_runs` from SQLite.
+- Parameter predicates may be implemented by parsing `params_json` in Python after an initial SQL query, or by using SQLite JSON functions if available.
+- The query language can be simple in v1. It does not need to support arbitrary Python evaluation if that creates safety or parsing concerns.
+- Results should be exportable as TSV for inspection and as input to planning.
 
 ---
 
@@ -842,8 +1060,8 @@ Do not use SQLite for v1.
 
 Purpose:
 
-- read completed attempt data;
-- read associated parameter sets;
+- read completed attempt data from SQLite;
+- read associated parameter sets from SQLite;
 - train or update resource prediction models;
 - write a new JSON resource model file.
 
@@ -865,6 +1083,7 @@ Behavior:
 - Use OOM and timeout failures to inform retry lower bounds, not as ordinary successful observations.
 - Store model coefficients and metadata in JSON.
 - Increment resource model counter in `state/simmgr_state.json`.
+- The SQLite registry may optionally record the latest resource model ID in metadata, but the model file itself remains JSON.
 
 ---
 
@@ -907,8 +1126,9 @@ Behavior:
 
 - Do not submit jobs unless a separate explicit option is provided; preferred design is separate submission.
 - Do not modify manifests.
-- May update run statuses to `planned` only if desired. If this is done, it should be clear and reversible.
-- Create attempts either during planning or during submission. Preferred design: create attempts during `submit-jobs`, because plans may be inspected and discarded before submission.
+- Do not create attempts during planning.
+- May optionally register lightweight plan metadata in a `plans` registry table if that table is implemented.
+- Do not change run status to `planned` by default. If planned status is used, it must be clear that this does not mean an attempt exists.
 
 ---
 
@@ -917,9 +1137,9 @@ Behavior:
 Purpose:
 
 - submit a previously created plan to Slurm;
-- create attempt records;
+- create attempt records in SQLite;
 - record Slurm job IDs;
-- update run and attempt registries.
+- update run and attempt registry records.
 
 Inputs:
 
@@ -931,8 +1151,7 @@ Inputs:
 Outputs:
 
 ```text
-updated registry/attempts.tsv
-updated registry/runs.tsv
+updated registry/simmgr.sqlite
 updated plans/plan_XXX/submission.tsv optional
 ```
 
@@ -940,9 +1159,18 @@ Behavior:
 
 - Use `sbatch` commands generated by the plan.
 - Record Slurm IDs returned by `sbatch`.
-- Create attempt IDs at submission time using current attempt counts.
+- Create attempt IDs at submission time using current attempt counts from SQLite.
+- Copy allocated resource fields from the plan into the `attempts` table.
 - Update logical runs to `submitted` or similar.
 - Do not alter manifest files.
+- Use transactions around attempt creation and run-status updates.
+- If Slurm submission fails, either do not create attempt rows for that failed submission or create attempts marked `submission_failed`. The chosen behavior must be consistent and documented.
+
+Recommended robust behavior:
+
+1. Submit one Slurm array or job.
+2. If `sbatch` succeeds, create/finalize attempts for groups in that submitted array and record the Slurm job ID.
+3. If `sbatch` fails, do not create attempts for that array, or mark any pre-created attempts as `submission_failed` in the same transaction.
 
 ---
 
@@ -970,6 +1198,7 @@ Behavior:
 - If Slurm kills the whole job due to OOM or timeout, later cleanup is handled by `collect-status`.
 - Checkpoint progress after each run.
 - Write group log events to `logs/groups/`.
+- Do not write to the SQLite registry from inside the Slurm job in v1.
 
 ---
 
@@ -1000,6 +1229,8 @@ python simulator.py \
 
 The exact argument names may be implemented by Codex, but the interface should contain these fields.
 
+`run-one` should not write to the SQLite registry from inside a Slurm job in v1. It should write structured JSONL events that `collect-status` later ingests.
+
 ---
 
 ### 7.10 `simmgr collect-status`
@@ -1010,8 +1241,8 @@ Purpose:
 - inspect group logs;
 - inspect Slurm accounting via `sacct` where available;
 - classify attempt outcomes;
-- update `attempts.tsv`;
-- update summarized logical-run status in `runs.tsv`.
+- update the `attempts` table;
+- update summarized logical-run status in the `runs` table.
 
 Inputs:
 
@@ -1028,6 +1259,39 @@ Behavior:
 - Use Slurm accounting to detect OOM, timeout, preemption, node failure, or missing terminal events.
 - If group died before some runs started, mark those attempts appropriately.
 - If an attempt succeeded but expected log/results are invalid, classify as failed validation if validation is implemented.
+- Use transactions when updating attempts and the summarized run status.
+
+---
+
+### 7.11 `simmgr export-registry`
+
+Purpose:
+
+- export selected or all SQLite registry tables to TSV for inspection, debugging, or sharing.
+
+Inputs:
+
+```text
+--project-config optional
+--output-dir optional
+--tables optional
+```
+
+Outputs:
+
+```text
+registry/exports/<timestamp>/param_sets.tsv
+registry/exports/<timestamp>/runs.tsv
+registry/exports/<timestamp>/attempts.tsv
+registry/exports/<timestamp>/manifest_files.tsv
+registry/exports/<timestamp>/manifest_runs.tsv
+```
+
+Behavior:
+
+- Do not treat exports as source of truth.
+- Do not update the registry except possibly to record export metadata if desired.
+- Prefer timestamped export directories to avoid silent overwriting.
 
 ---
 
@@ -1056,6 +1320,8 @@ logs/attempts/
 logs/groups/
 logs/slurm/
 ```
+
+The registry stores the exact `attempt_log_path`, so the log layout can be changed later without changing the identity scheme.
 
 ---
 
@@ -1160,12 +1426,12 @@ If stored in `project_config.yaml`, it is project-management-level configuration
 
 Resource modeling uses:
 
-- `params_json`;
+- `params_json` from the SQLite `param_sets` table;
 - selected numeric parameters;
 - selected categorical parameters;
-- observed elapsed time from successful attempts;
-- observed max RSS from successful attempts;
-- failure information from OOM and timeout attempts.
+- observed elapsed time from successful attempts in the `attempts` table;
+- observed max RSS from successful attempts in the `attempts` table;
+- failure information from OOM and timeout attempts in the `attempts` table.
 
 The resource-relevant parameters are specified in `simulation_spec.yaml`.
 
@@ -1296,7 +1562,7 @@ Required columns:
 | `resource_model_id` | Model used |
 | `prediction_reason` | learned model, fallback, retry after OOM, retry after timeout, etc. |
 
-When attempts are created, allocated resource fields are copied into `registry/attempts.tsv`.
+When attempts are created, allocated resource fields are copied into the SQLite `attempts` table.
 
 ---
 
@@ -1466,9 +1732,11 @@ Required columns:
 | `allocated_ram_mb` | Group memory allocation |
 | `allocated_cpus` | Group CPUs |
 | `predicted_run_time_minutes` | Predicted time for individual run |
-| `attempt_id` | May be blank until submission if attempts are created then |
+| `attempt_id` | Blank until submission if attempts are created then |
 
 There may be multiple rows per group, one per run.
+
+After submission, SimMgr may either update `groups.tsv` with assigned `attempt_id`s or write a separate `submission.tsv`. The SQLite `attempts` table is the source of truth for attempt IDs.
 
 ---
 
@@ -1591,6 +1859,7 @@ failed_simulator_error
 failed_validation
 failed_unknown
 not_started_due_to_group_failure
+submission_failed
 ```
 
 ---
@@ -1614,7 +1883,7 @@ This precedence can be adjusted, but OOM and timeout should be detected reliably
 
 ### 13.3 Logical-run status update
 
-After attempts are updated, `runs.tsv` should summarize logical-run status:
+After attempts are updated, the `runs` table should summarize logical-run status:
 
 - If any attempt succeeded, run status is `succeeded`.
 - Else if latest attempt failed OOM, run status is `failed_oom`.
@@ -1630,6 +1899,8 @@ best_attempt_id
 status
 updated_at
 ```
+
+These updates should occur in the same transaction as related attempt updates when possible.
 
 ---
 
@@ -1655,12 +1926,13 @@ attempt_count == 0
 
 Implementation details:
 
-- Read `runs.tsv`.
-- Join with `param_sets.tsv` to access `params_json`.
-- Optionally join with `attempts.tsv` to access last attempt fields.
-- Parse `params_json` in Python.
+- Query the SQLite `runs` table.
+- Join with `param_sets` to access `params_json`.
+- Optionally join with `attempts` to access latest or best attempt fields.
+- Optionally join with `manifest_runs` to filter on manifest membership.
+- Parse `params_json` in Python if SQLite JSON functions are unavailable or if a safer custom query evaluator is desired.
 - Evaluate filters safely.
-- Do not require SQLite.
+- Return results to stdout or write a TSV selection file.
 
 The query language can be simple in v1. It does not need to support arbitrary Python evaluation if that creates safety or parsing concerns.
 
@@ -1693,8 +1965,9 @@ simmgr ingest-manifest --project-config project_config.yaml --manifest latest
 Result:
 
 - immutable manifest written;
-- new unique parameter sets added;
-- new unique logical runs added;
+- new unique parameter sets added to SQLite;
+- new unique logical runs added to SQLite;
+- manifest membership recorded in SQLite;
 - previous runs untouched.
 
 ---
@@ -1760,7 +2033,7 @@ simmgr build-manifest
 simmgr ingest-manifest
 ```
 
-Only new unique logical runs are added to the registry.
+Only new unique logical runs are added to the registry. Existing runs remain unchanged except for updated manifest-membership metadata if they reappear.
 
 ---
 
@@ -1788,6 +2061,16 @@ Old runs remain untouched.
 
 ---
 
+### 15.8 Export registry for inspection
+
+```text
+simmgr export-registry --project-config project_config.yaml
+```
+
+This writes human-readable TSV snapshots of the SQLite registry to `registry/exports/`.
+
+---
+
 ## 16. Important Edge Cases
 
 ### 16.1 Manifest contains duplicate rows
@@ -1805,7 +2088,7 @@ Do not create duplicate registry rows.
 
 Expected behavior.
 
-`ingest-manifest` should skip existing `param_set_id`s and `run_id`s and add only new ones.
+`ingest-manifest` should skip inserting existing `param_set_id`s and `run_id`s, but should record manifest membership in `manifest_runs` and update `last_manifest_id` metadata.
 
 ---
 
@@ -1827,7 +2110,7 @@ Preferred behavior:
 2. If `sbatch` succeeds, create or finalize attempt rows with Slurm job ID.
 3. If `sbatch` fails, do not create attempts, or mark them as `submission_failed`.
 
-Codex should choose a robust implementation.
+Codex should choose a robust implementation and apply it consistently.
 
 ---
 
@@ -1845,7 +2128,7 @@ Mark unstarted runs as:
 not_started_due_to_group_failure
 ```
 
-or leave them pending if no attempt was actually started. The cleaner approach depends on whether attempts are created at submission time for all planned group members. Since attempts are likely created at submission time, use `not_started_due_to_group_failure`.
+or leave them pending if no attempt was actually created. The cleaner approach depends on whether attempts are created at submission time for all planned group members. Since attempts are likely created at submission time, use `not_started_due_to_group_failure`.
 
 ---
 
@@ -1889,11 +2172,24 @@ If the number of attempts later becomes very large, optional sharding can be add
 
 ---
 
+### 16.9 SQLite on shared cluster filesystems
+
+SQLite is reliable for the registry, but cluster filesystems vary.
+
+For v1:
+
+- Avoid writing to SQLite from Slurm array tasks or simulator jobs.
+- Keep registry writes in user-invoked SimMgr commands such as `ingest-manifest`, `submit-jobs`, and `collect-status`.
+- Avoid running multiple registry-writing SimMgr commands simultaneously.
+- If a command detects that the registry is locked, it should fail clearly or respect a configured busy timeout.
+- Consider warning users not to place the project registry on a filesystem where SQLite locking is known to be unreliable.
+
+---
+
 ## 17. Out of Scope for v1
 
 Do not implement the following in v1 unless explicitly requested later:
 
-- SQLite registry;
 - Parquet output;
 - pickle resource models;
 - random forest or gradient boosting resource models;
@@ -1901,7 +2197,10 @@ Do not implement the following in v1 unless explicitly requested later:
 - support for R simulators;
 - support for non-Slurm schedulers;
 - complex project-specific result summarization;
-- automatic pilot set selection, except possibly as a helper later.
+- automatic pilot set selection, except possibly as a helper later;
+- direct registry writes from Slurm worker jobs.
+
+SQLite registry support is **in scope** for v1.
 
 ---
 
@@ -1911,13 +2210,15 @@ SimMgr v1 should implement:
 
 ```text
 Standalone reusable Python repository
-Text-first project storage
+Text-first project storage outside the registry
+SQLite registry at registry/simmgr.sqlite
 YAML configs and simulation specs
-TSV manifests and registries
+TSV immutable manifests
+TSV plan files and optional TSV registry exports
 JSONL per-attempt logs
 JSON resource models
 Immutable manifests
-Mutable but atomic TSV registries
+Transactional mutable SQLite registry
 Explicit parameter canonicalization
 param_set_id = hash(params_json)
 run_id = <param_set_id>_r<replicate>
@@ -1925,7 +2226,7 @@ attempt_id = <run_id>_a<attempt>
 One logical run can have many attempts
 Retries do not create new manifests
 Resource predictions stored in plan directories
-Actual allocations stored in attempts registry
+Actual allocations stored in attempts table
 Regression-based resource learning
 Dynamic time/RAM buckets
 Groups for sequential short runs
@@ -1934,6 +2235,7 @@ Pilot sets as one-column run_id TSV files
 Python-only simulator interface for v1
 Standard simulator_finished and attempt_finished JSONL events
 Project-specific summarization outside core SimMgr
+No SQLite writes from Slurm worker jobs in v1
 ```
 
 This specification should be treated as the implementation guide for Codex when creating the initial SimMgr scripts.
