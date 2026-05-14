@@ -1,0 +1,29 @@
+default_project_config: /n/groups/price/nuno/simmgr/demos/popstat_demo_project/project_config.yaml
+
+slurm_defaults:
+  partition: short
+  account: ""
+  cpus_per_task: 1
+  max_array_size: 1000
+
+resource_defaults:
+  max_job_time_minutes: 720
+  default_time_minutes: 10
+  default_ram_mb: 2048
+  min_time_minutes: 5
+  min_ram_mb: 1000
+  safety_time_multiplier: 1.25
+  safety_ram_multiplier: 1.25
+  oom_retry_multiplier: 2.0
+  timeout_retry_multiplier: 2.0
+
+path_defaults:
+  manifests_dir: manifests
+  registry_dir: registry
+  plans_dir: plans
+  logs_dir: logs
+  outputs_dir: outputs
+  pilot_sets_dir: pilot_sets
+  resource_models_dir: resource_models
+  state_dir: state
+

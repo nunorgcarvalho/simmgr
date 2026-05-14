@@ -1,0 +1,26 @@
+default_parameters:
+  simulator_version: 1
+  N: 500
+  num_variants: 500
+  h2: 0.5
+  replicates: 1
+simulation_sets:
+  - name: demo_small
+    grid:
+      N:
+        - 200
+        - 500
+      num_variants:
+        - 100
+      h2:
+        - 0.2
+        - 0.5
+    replicates: 2
+resource_model:
+  numeric_parameters:
+    - N
+    - num_variants
+  categorical_parameters: []
+  include_log_terms: true
+  include_square_terms: false
+  include_pairwise_products: false

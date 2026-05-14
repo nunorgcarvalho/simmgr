@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simmgr"
+version = "0.1.0"
+description = "SQLite-backed Slurm simulation management toolkit"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{name = "Nuno", email = "noreply@example.com"}]
+dependencies = []
+
+[project.scripts]
+simmgr = "simmgr.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["simmgr*"]
+

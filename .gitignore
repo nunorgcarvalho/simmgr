@@ -1,4 +1,18 @@
 demos/*
+!demos/
+!demos/popstat_demo_simulator.py
+!demos/popstat_demo_project/
+!demos/popstat_demo_project/project_config.yaml
+!demos/popstat_demo_project/simulation_spec.yaml
+!demos/popstat_demo_project/pilot_sets/
+!demos/popstat_demo_project/pilot_sets/pilot_001.tsv
+demos/popstat_demo_project/manifests/
+demos/popstat_demo_project/plans/
+demos/popstat_demo_project/registry/
+demos/popstat_demo_project/state/
+demos/popstat_demo_project/logs/
+demos/popstat_demo_project/outputs/
+demos/popstat_demo_project/resource_models/
 
 
 
