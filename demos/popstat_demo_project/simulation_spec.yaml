@@ -7,14 +7,9 @@ default_parameters:
 simulation_sets:
   - name: demo_small
     grid:
-      N:
-        - 200
-        - 500
-      num_variants:
-        - 100
-      h2:
-        - 0.2
-        - 0.5
+      N: [200, 500, 1000, 2000, 4000, 8000]
+      num_variants: [100, 500, 1000, 2000]
+      h2: [0.2, 0.5]
     replicates: 2
 resource_model:
   numeric_parameters:
