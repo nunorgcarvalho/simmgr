@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -8,6 +9,7 @@ from .config import configured_path, load_project_config, state_path
 from .query_runs import query_runs
 from .registry import connect
 from .resources import predict_for_runs, round_time_minutes
+from .runner import simmgr_shell_command
 from .state import next_number
 from .time_utils import utc_now
 from .tsv import read_tsv, write_tsv
@@ -203,6 +205,18 @@ def _sbatch_commands(config: dict[str, Any], plan_id: str, arrays: list[dict[str
     for array_id, row in seen.items():
         task_count = sum(1 for r in arrays if r["array_id"] == array_id)
         account = f" --account={config['slurm']['account']}" if config["slurm"].get("account") else ""
+        run_group_command = simmgr_shell_command(
+            config,
+            "run-group",
+            "--project-config",
+            project_config,
+            "--plan-id",
+            plan_id,
+            "--array-id",
+            array_id,
+            "--array-task-index",
+            "__SIMMGR_ARRAY_TASK_INDEX__",
+        ).replace("__SIMMGR_ARRAY_TASK_INDEX__", "$SLURM_ARRAY_TASK_ID")
         commands.append(
             "sbatch"
             f" --partition={config['slurm']['partition']}{account}"
@@ -213,7 +227,7 @@ def _sbatch_commands(config: dict[str, Any], plan_id: str, arrays: list[dict[str
             f" --job-name=simmgr_{plan_id}_{array_id}"
             f" --output={configured_path(config, 'logs_dir')}/slurm/{plan_id}_{array_id}.%A_%a.out"
             f" --error={configured_path(config, 'logs_dir')}/slurm/{plan_id}_{array_id}.%A_%a.err"
-            f" --wrap=\"simmgr run-group --project-config {project_config} --plan-id {plan_id} --array-id {array_id} --array-task-index \\$SLURM_ARRAY_TASK_ID\""
+            f" --wrap={shlex.quote(run_group_command)}"
         )
     return "\n".join(commands) + "\n"
 
@@ -221,4 +235,3 @@ def _sbatch_commands(config: dict[str, Any], plan_id: str, arrays: list[dict[str
 def _slurm_time(minutes: int) -> str:
     hours, mins = divmod(minutes, 60)
     return f"{hours:02d}:{mins:02d}:00"
-

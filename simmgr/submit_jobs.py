@@ -8,6 +8,7 @@ from typing import Any
 from .config import configured_path, load_project_config, registry_path
 from .ids import attempt_id as make_attempt_id
 from .registry import connect, row, transaction, update_metadata
+from .runner import simmgr_shell_command
 from .time_utils import utc_now
 from .tsv import read_tsv, write_tsv
 
@@ -70,6 +71,18 @@ def _resolve_plan(config: dict[str, Any], plan: str | Path | None) -> Path:
 def _build_sbatch_command(config: dict[str, Any], plan_id: str, array_id: str, array_rows: list[dict[str, str]]) -> list[str]:
     first = array_rows[0]
     task_count = len(array_rows)
+    run_group_command = simmgr_shell_command(
+        config,
+        "run-group",
+        "--project-config",
+        config["_project_config_path"],
+        "--plan-id",
+        plan_id,
+        "--array-id",
+        array_id,
+        "--array-task-index",
+        "__SIMMGR_ARRAY_TASK_INDEX__",
+    ).replace("__SIMMGR_ARRAY_TASK_INDEX__", "$SLURM_ARRAY_TASK_ID")
     command = [
         "sbatch",
         f"--partition={config['slurm']['partition']}",
@@ -81,7 +94,7 @@ def _build_sbatch_command(config: dict[str, Any], plan_id: str, array_id: str, a
         f"--output={configured_path(config, 'logs_dir')}/slurm/{plan_id}_{array_id}.%A_%a.out",
         f"--error={configured_path(config, 'logs_dir')}/slurm/{plan_id}_{array_id}.%A_%a.err",
         "--wrap",
-        f"simmgr run-group --project-config {config['_project_config_path']} --plan-id {plan_id} --array-id {array_id} --array-task-index $SLURM_ARRAY_TASK_ID",
+        run_group_command,
     ]
     if config["slurm"].get("account"):
         command.insert(2, f"--account={config['slurm']['account']}")
@@ -172,4 +185,3 @@ def _parse_job_id(stdout: str) -> str:
 def _slurm_time(minutes: int) -> str:
     hours, mins = divmod(minutes, 60)
     return f"{hours:02d}:{mins:02d}:00"
-
