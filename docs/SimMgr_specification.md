@@ -1110,6 +1110,7 @@ Inputs may include:
 --pilot-set pilot_001.tsv optional
 --resource-model latest optional
 --retry-policy optional
+--one-run-per-group optional, recommended for RAM-learning pilots
 ```
 
 Outputs:
@@ -1476,7 +1477,7 @@ log(runtime_seconds)
 log(max_rss_gb)
 ```
 
-The runtime model can be trained from SimMgr wrapper elapsed times. The memory model should only train on Slurm-attributed per-run RSS values. If grouped sequential jobs only expose group-level MaxRSS, SimMgr should not use that value as per-run memory training data.
+The runtime model can be trained from SimMgr wrapper elapsed times. The memory model should use exact Slurm-attributed per-run RSS when available. It may also use censored memory observations: successful runs without exact RSS provide upper bounds based on allocated RAM, and runs active during Slurm OOM provide lower bounds based on allocated RAM. If grouped sequential jobs only expose group-level MaxRSS, SimMgr should not use that value as exact per-run memory training data.
 
 Candidate features may include:
 
@@ -1999,7 +2000,7 @@ pilot_sets/pilot_001.tsv
 Then:
 
 ```text
-simmgr plan-jobs --project-config project_config.yaml --pilot-set pilot_001.tsv --generous-resources
+simmgr plan-jobs --project-config project_config.yaml --pilot-set pilot_001.tsv --generous-resources --one-run-per-group
 simmgr submit-jobs --project-config project_config.yaml --plan plan_001
 simmgr collect-status --project-config project_config.yaml --plan plan_001
 simmgr learn-resources --project-config project_config.yaml

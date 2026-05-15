@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from scipy.optimize import minimize
+from scipy.special import log_ndtr
 
 from .canonicalize import parse_params_json
 from .config import configured_path, load_project_config, project_path, registry_path, state_path
@@ -55,9 +57,13 @@ def learn_resources(project_config: str | Path | None = None, global_config: str
         memory_data = rows(
             conn,
             """
-            SELECT a.max_rss_gb, p.params_json
+            SELECT a.status, a.allocated_ram_gb, a.max_rss_gb, a.max_rss_source, p.params_json
             FROM attempts a JOIN param_sets p USING(param_set_id)
-            WHERE a.status = 'succeeded' AND a.max_rss_gb IS NOT NULL AND a.max_rss_source = 'slurm'
+            WHERE a.allocated_ram_gb IS NOT NULL
+              AND (
+                (a.status = 'succeeded')
+                OR (a.status = 'failed_oom')
+              )
             """,
         )
     if len(runtime_data) < 2:
@@ -78,7 +84,7 @@ def learn_resources(project_config: str | Path | None = None, global_config: str
         "model_type": "log_linear_regression",
         "training_attempt_count": len(runtime_data),
         "runtime_training_attempt_count": len(runtime_data),
-        "memory_training_attempt_count": len(memory_data),
+        "memory_training_attempt_count": 0,
         "features": feature_cfg,
         "feature_names": feature_names,
         "feature_scaling": scaling,
@@ -90,20 +96,22 @@ def learn_resources(project_config: str | Path | None = None, global_config: str
         },
         "memory_model": None,
     }
-    if len(memory_data) >= 2:
-        memory_feature_names, memory_matrix = _feature_matrix([parse_params_json(r["params_json"]) for r in memory_data], feature_cfg)
+    memory_observations = _memory_observations(memory_data)
+    if len(memory_observations) >= 2:
+        memory_feature_names, memory_matrix = _feature_matrix([obs["params"] for obs in memory_observations], feature_cfg)
         memory_x_scaled, memory_scaling = _standardize_matrix(memory_matrix, memory_feature_names)
         memory_x = np.column_stack([np.ones(len(memory_x_scaled)), memory_x_scaled])
-        memory_y = np.log(np.maximum([float(r["max_rss_gb"]) for r in memory_data], 1e-6))
-        memory_coef = _fit_ridge(memory_x, memory_y, ridge_lambda)
-        memory_resid = memory_y - memory_x @ memory_coef
+        memory_fit = _fit_censored_log_linear(memory_x, memory_observations, ridge_lambda)
         memory_coef_names = ["intercept"] + memory_feature_names
         model["memory_feature_names"] = memory_feature_names
         model["memory_feature_scaling"] = memory_scaling
+        model["memory_training_attempt_count"] = len(memory_observations)
         model["memory_model"] = {
             "response": "log_max_rss_gb",
-            "coefficients": dict(zip(memory_coef_names, map(float, memory_coef))),
-            "residual_sd": float(np.std(memory_resid, ddof=1)) if len(memory_data) > 1 else 0.0,
+            "fit_method": "censored_log_linear_regression",
+            "coefficients": dict(zip(memory_coef_names, map(float, memory_fit["coefficients"]))),
+            "residual_sd": memory_fit["sigma"],
+            "observation_counts": memory_fit["observation_counts"],
         }
     out = configured_path(config, "resource_models_dir") / f"{model_id}.json"
     out.write_text(json.dumps(model, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -252,6 +260,59 @@ def _fit_ridge(x: np.ndarray, y: np.ndarray, ridge_lambda: float) -> np.ndarray:
     penalty = np.eye(x.shape[1]) * ridge_lambda
     penalty[0, 0] = 0.0
     return np.linalg.solve(x.T @ x + penalty, x.T @ y)
+
+
+def _memory_observations(rows_: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    observations = []
+    for item in rows_:
+        params = parse_params_json(item["params_json"])
+        if item.get("max_rss_gb") is not None and item.get("max_rss_source") == "slurm":
+            observations.append({"kind": "exact", "value": float(item["max_rss_gb"]), "params": params})
+        elif item.get("status") == "succeeded" and item.get("allocated_ram_gb") is not None:
+            observations.append({"kind": "upper", "value": float(item["allocated_ram_gb"]), "params": params})
+        elif item.get("status") == "failed_oom" and item.get("allocated_ram_gb") is not None:
+            observations.append({"kind": "lower", "value": float(item["allocated_ram_gb"]), "params": params})
+    return observations
+
+
+def _fit_censored_log_linear(x: np.ndarray, observations: list[dict[str, Any]], ridge_lambda: float) -> dict[str, Any]:
+    y = np.log(np.maximum([obs["value"] for obs in observations], 1e-9))
+    kinds = [obs["kind"] for obs in observations]
+    pseudo_y = y.copy()
+    for i, kind in enumerate(kinds):
+        if kind == "upper":
+            pseudo_y[i] -= 0.25
+        elif kind == "lower":
+            pseudo_y[i] += 0.25
+    beta0 = _fit_ridge(x, pseudo_y, ridge_lambda)
+    sigma0 = float(max(np.std(pseudo_y - x @ beta0), 0.25))
+    start = np.concatenate([beta0, [math.log(sigma0)]])
+
+    def objective(theta: np.ndarray) -> float:
+        beta = theta[:-1]
+        sigma = math.exp(theta[-1]) + 1e-9
+        mu = x @ beta
+        z = (y - mu) / sigma
+        log_pdf = -0.5 * z * z - math.log(sigma) - 0.5 * math.log(2 * math.pi)
+        log_likelihood = 0.0
+        for idx, kind in enumerate(kinds):
+            if kind == "exact":
+                log_likelihood += log_pdf[idx]
+            elif kind == "upper":
+                log_likelihood += log_ndtr(z[idx])
+            elif kind == "lower":
+                log_likelihood += log_ndtr(-z[idx])
+        penalty = 0.5 * ridge_lambda * float(np.sum(beta[1:] ** 2))
+        return float(-log_likelihood + penalty)
+
+    result = minimize(objective, start, method="L-BFGS-B")
+    theta = result.x if result.success else start
+    counts = {kind: kinds.count(kind) for kind in ["exact", "upper", "lower"]}
+    return {
+        "coefficients": theta[:-1],
+        "sigma": float(math.exp(theta[-1])),
+        "observation_counts": counts,
+    }
 
 
 def _latest_attempts(config: dict[str, Any], run_ids: list[str]) -> dict[str, dict[str, Any]]:

@@ -49,6 +49,7 @@ def main(argv: list[str] | None = None) -> int:
     plan.add_argument("--resource-model", default=None)
     plan.add_argument("--retry-policy", choices=["oom", "timeout"])
     plan.add_argument("--generous-resources", action="store_true")
+    plan.add_argument("--one-run-per-group", action="store_true")
 
     submit = sub.add_parser("submit-jobs")
     _project_args(submit)
@@ -101,6 +102,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.resource_model,
                 args.retry_policy,
                 args.generous_resources,
+                args.one_run_per_group,
                 args.global_config,
             )
         )
@@ -136,4 +138,3 @@ def _print_rows(rows: list[dict]) -> None:
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
-

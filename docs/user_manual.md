@@ -171,8 +171,10 @@ run_id
 Plan pilot jobs with conservative fallback resources:
 
 ```bash
-python -m simmgr.cli plan-jobs --pilot-set pilot_001.tsv --generous-resources
+python -m simmgr.cli plan-jobs --pilot-set pilot_001.tsv --generous-resources --one-run-per-group
 ```
+
+`--one-run-per-group` is strongly recommended for resource-learning pilots. It gives each run its own Slurm allocation, which makes Slurm MaxRSS attributable to that run. Without this, grouped runs still teach the runtime model, but ordinary Slurm MaxRSS is group-level and SimMgr will not use it as per-run RAM training data.
 
 This creates `plans/plan_XXX/`:
 
@@ -327,7 +329,45 @@ For controlled simulator errors:
 
 Large scientific outputs should be written as files and referenced with JSONL `result_file` events.
 
-## 16. Demo Project
+## 16. RAM Learning Strategy
+
+RAM learning is trickier than runtime learning because grouped jobs share one Slurm allocation. SimMgr uses three kinds of memory information:
+
+```text
+exact: Slurm-attributed per-run MaxRSS is available
+upper-censored: a run completed under an allocation, so true RAM was <= allocated RAM
+lower-censored: a run was active when Slurm reported OOM, so true RAM was > allocated RAM
+```
+
+Suppose a group contains `r1` and `r2`. If the allocation is 16 GB and Slurm reports MaxRSS of 16 GB, that does not tell SimMgr whether `r1` needed 16 GB, `r2` needed 16 GB, or the group as a whole peaked at 16 GB while only one run was responsible. SimMgr therefore does not assign group-level MaxRSS to individual runs.
+
+However, grouped outcomes can still be informative. If `r1` completes and `r2` is active when the group OOMs under a 16 GB allocation, SimMgr can learn:
+
+```text
+r1 RAM <= 16 GB
+r2 RAM > 16 GB
+```
+
+The memory model is fit as a censored log-linear regression so those inequalities contribute without pretending they are exact measurements.
+
+Recommended workflow:
+
+```bash
+python -m simmgr.cli plan-jobs --pilot-set pilot_001.tsv --generous-resources --one-run-per-group
+python -m simmgr.cli submit-jobs --plan plan_XXX
+python -m simmgr.cli collect-status --plan plan_XXX
+python -m simmgr.cli learn-resources
+```
+
+Once the memory model has Slurm-attributed one-run pilot data, production plans can use normal grouping:
+
+```bash
+python -m simmgr.cli plan-jobs --where 'status == "pending"'
+```
+
+Future enhancement idea: run each attempt inside an explicit Slurm step and collect step-level MaxRSS. If the cluster reliably reports per-step MaxRSS, SimMgr could learn RAM within grouped allocations. Until that is implemented and validated, one-run pilot groups are the safest option.
+
+## 17. Demo Project
 
 The repo includes:
 

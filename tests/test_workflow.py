@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import sqlite3
 import stat
 import textwrap
@@ -14,6 +15,7 @@ from simmgr.ingest_manifest import ingest_manifest
 from simmgr.init_project import init_project
 from simmgr.logging_utils import append_jsonl
 from simmgr.plan_jobs import plan_jobs
+from simmgr.resources import learn_resources
 from simmgr.registry import connect
 from simmgr.run_group import run_group
 from simmgr.submit_jobs import submit_jobs
@@ -160,3 +162,55 @@ def test_group_timeout_preserves_completed_runs_and_marks_unstarted(tmp_path: Pa
             )
         }
     assert statuses == {"not_started_due_to_group_failure"}
+
+
+def test_one_run_per_group_planning(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    init_project(project)
+    config_path = project / "project_config.yaml"
+    manifest = build_manifest(config_path)
+    ingest_manifest(config_path, manifest)
+    plan_dir = plan_jobs(config_path, where="replicate == 1", generous_resources=True, one_run_per_group=True)
+    groups = read_tsv(plan_dir / "groups.tsv")
+    group_ids = [row["group_id"] for row in groups]
+    assert len(groups) == 4
+    assert len(set(group_ids)) == 4
+    summary = (plan_dir / "plan_summary.txt").read_text(encoding="utf-8")
+    assert "one_run_per_group: True" in summary
+
+
+def test_censored_memory_model_uses_bounds(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    init_project(project)
+    config_path = project / "project_config.yaml"
+    manifest = build_manifest(config_path)
+    ingest_manifest(config_path, manifest)
+    plan_dir = plan_jobs(config_path, where="replicate == 1", generous_resources=True, one_run_per_group=True)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    sbatch = fake_bin / "sbatch"
+    sbatch.write_text("#!/usr/bin/env bash\necho Submitted batch job 12345\n", encoding="utf-8")
+    sbatch.chmod(sbatch.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv("PATH", f"{fake_bin}:{os.environ['PATH']}")
+    submit_jobs(config_path, plan_dir.name)
+    submissions = read_tsv(plan_dir / "submission.tsv")
+    with connect(project / "registry" / "simmgr.sqlite") as conn:
+        conn.execute(
+            "UPDATE attempts SET status = 'succeeded', elapsed_seconds = 10, allocated_ram_gb = 16 WHERE attempt_id = ?",
+            (submissions[0]["attempt_id"],),
+        )
+        conn.execute(
+            "UPDATE attempts SET status = 'failed_oom', allocated_ram_gb = 16 WHERE attempt_id = ?",
+            (submissions[1]["attempt_id"],),
+        )
+        conn.execute(
+            "UPDATE attempts SET status = 'succeeded', elapsed_seconds = 20, allocated_ram_gb = 4, max_rss_gb = 2, max_rss_source = 'slurm' WHERE attempt_id = ?",
+            (submissions[2]["attempt_id"],),
+        )
+        conn.commit()
+    model_path = learn_resources(config_path)
+    model = json.loads(model_path.read_text(encoding="utf-8"))
+    assert model["memory_model"]["fit_method"] == "censored_log_linear_regression"
+    assert model["memory_model"]["observation_counts"]["upper"] >= 1
+    assert model["memory_model"]["observation_counts"]["lower"] >= 1
+    assert model["memory_model"]["observation_counts"]["exact"] >= 1

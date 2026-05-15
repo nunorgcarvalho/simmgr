@@ -57,6 +57,7 @@ def plan_jobs(
     resource_model: str | Path | None = None,
     retry_policy: str | None = None,
     generous_resources: bool = False,
+    one_run_per_group: bool = False,
     global_config: str | Path | None = None,
 ) -> Path:
     config = load_project_config(project_config, global_config)
@@ -85,14 +86,14 @@ def plan_jobs(
         for pred in predictions:
             pred["prediction_reason"] = "generous fallback"
     write_tsv(plan_dir / "resource_predictions.tsv", predictions, PREDICTION_COLUMNS)
-    groups = _make_groups(config, predictions)
+    groups = _make_groups(config, predictions, one_run_per_group=one_run_per_group)
     write_tsv(plan_dir / "groups.tsv", groups, GROUP_COLUMNS)
     arrays = _make_arrays(config, groups)
     write_tsv(plan_dir / "arrays.tsv", arrays, ARRAY_COLUMNS)
     (plan_dir / "sbatch_commands.sh").write_text(_sbatch_commands(config, plan_id, arrays), encoding="utf-8")
     capped_count = sum(1 for p in predictions if p.get("resource_limit_status") != "ok")
     (plan_dir / "plan_summary.txt").write_text(
-        f"plan_id: {plan_id}\ncreated_at: {utc_now()}\nselected_runs: {len(selected)}\ngroups: {len({g['group_id'] for g in groups})}\narrays: {len({a['array_id'] for a in arrays})}\nresource_capped_runs: {capped_count}\n",
+        f"plan_id: {plan_id}\ncreated_at: {utc_now()}\nselected_runs: {len(selected)}\ngroups: {len({g['group_id'] for g in groups})}\narrays: {len({a['array_id'] for a in arrays})}\none_run_per_group: {one_run_per_group}\nresource_capped_runs: {capped_count}\n",
         encoding="utf-8",
     )
     with connect(configured_path(config, "registry_dir") / "simmgr.sqlite") as conn:
@@ -125,7 +126,12 @@ def _selection_reason(where: str | None, status: str | None, pilot_set: str | Pa
     return "; ".join(parts) if parts else "status=pending"
 
 
-def _make_groups(config: dict[str, Any], predictions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _make_groups(config: dict[str, Any], predictions: list[dict[str, Any]], one_run_per_group: bool = False) -> list[dict[str, Any]]:
+    if one_run_per_group:
+        rows: list[dict[str, Any]] = []
+        for group_number, pred in enumerate(predictions, start=1):
+            rows.extend(_group_rows(config, group_number, [pred]))
+        return rows
     max_minutes = int(config["resources"]["max_job_time_minutes"])
     buckets: dict[tuple[int, int], list[dict[str, Any]]] = defaultdict(list)
     for pred in predictions:
