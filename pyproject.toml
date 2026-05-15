@@ -11,9 +11,11 @@ requires-python = ">=3.10"
 authors = [{name = "Nuno", email = "noreply@example.com"}]
 dependencies = []
 
+[project.optional-dependencies]
+dashboard = ["shiny>=1.6", "pandas", "matplotlib"]
+
 [project.scripts]
 simmgr = "simmgr.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["simmgr*"]
-

@@ -86,6 +86,12 @@ def main(argv: list[str] | None = None) -> int:
     export.add_argument("--output-dir")
     export.add_argument("--tables", nargs="*")
 
+    dashboard = sub.add_parser("dashboard")
+    _project_args(dashboard)
+    dashboard.add_argument("--host", default="127.0.0.1")
+    dashboard.add_argument("--port", type=int, default=8000)
+    dashboard.add_argument("--launch-browser", action="store_true")
+
     args = parser.parse_args(argv)
     if args.command == "init":
         root = init_project(args.project_root, args.global_config, args.force)
@@ -129,6 +135,10 @@ def main(argv: list[str] | None = None) -> int:
         print(collect_status(args.project_config, args.plan, args.attempt, args.global_config))
     elif args.command == "export-registry":
         print(export_registry(args.project_config, args.output_dir, args.tables, args.global_config))
+    elif args.command == "dashboard":
+        from .dashboard import launch_dashboard
+
+        launch_dashboard(args.project_config, args.global_config, args.host, args.port, args.launch_browser)
     return 0
 
 
