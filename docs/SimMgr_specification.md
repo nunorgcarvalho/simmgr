@@ -1046,9 +1046,10 @@ Behavior:
 Purpose:
 
 - select logical runs based on run status, attempt status, manifest ID, replicate number, or parameters inside `params_json`.
-- default to `status == "pending"` when neither a status nor a where expression is supplied.
+- default to the virtual status `any` when no status is supplied.
 - support the virtual status shorthand `not_succeeded` for all non-completed runs; this is query syntax, not a stored run status.
 - support the virtual status shorthand `any` to disable status filtering; this is query syntax, not a stored run status.
+- print a status-count summary whenever the effective status is `any` or `not_succeeded`.
 
 Example selectors:
 
@@ -1141,6 +1142,8 @@ Inputs may include:
 --retry-policy optional
 --one-run-per-group optional, recommended for RAM-learning pilots
 ```
+
+If `--status` is omitted, `plan-jobs` should use the virtual status `any`. It should print a status-count summary whenever the effective status is `any` or `not_succeeded`.
 
 Outputs:
 

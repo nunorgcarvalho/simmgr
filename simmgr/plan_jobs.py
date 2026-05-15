@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import configured_path, load_project_config, state_path
-from .query_runs import query_runs
+from .query_runs import effective_status, query_runs, should_print_status_summary, status_summary_text
 from .registry import connect
 from .resources import predict_for_runs, round_time_minutes
 from .runner import simmgr_shell_command
@@ -64,6 +64,8 @@ def plan_jobs(
     selected = _select_runs(config, where, status, pilot_set)
     if not selected:
         raise SystemExit("No runs matched selection")
+    if should_print_status_summary(status):
+        print(status_summary_text(selected, "planned runs"))
     plan_number = next_number(state_path(config), "last_plan_number")
     plan_id = f"plan_{plan_number:03d}"
     plan_dir = configured_path(config, "plans_dir") / plan_id
@@ -93,7 +95,7 @@ def plan_jobs(
     (plan_dir / "sbatch_commands.sh").write_text(_sbatch_commands(config, plan_id, arrays), encoding="utf-8")
     capped_count = sum(1 for p in predictions if p.get("resource_limit_status") != "ok")
     (plan_dir / "plan_summary.txt").write_text(
-        f"plan_id: {plan_id}\ncreated_at: {utc_now()}\nselected_runs: {len(selected)}\ngroups: {len({g['group_id'] for g in groups})}\narrays: {len({a['array_id'] for a in arrays})}\none_run_per_group: {one_run_per_group}\nresource_capped_runs: {capped_count}\n",
+        f"plan_id: {plan_id}\ncreated_at: {utc_now()}\nselected_runs: {len(selected)}\nselection_status: {effective_status(status)}\ngroups: {len({g['group_id'] for g in groups})}\narrays: {len({a['array_id'] for a in arrays})}\none_run_per_group: {one_run_per_group}\nresource_capped_runs: {capped_count}\n",
         encoding="utf-8",
     )
     with connect(configured_path(config, "registry_dir") / "simmgr.sqlite") as conn:
@@ -119,11 +121,13 @@ def _selection_reason(where: str | None, status: str | None, pilot_set: str | Pa
     parts = []
     if status:
         parts.append(f"status={status}")
+    else:
+        parts.append("status=any")
     if where:
         parts.append(f"where={where}")
     if pilot_set:
         parts.append(f"pilot_set={pilot_set}")
-    return "; ".join(parts) if parts else "status=pending"
+    return "; ".join(parts)
 
 
 def _make_groups(config: dict[str, Any], predictions: list[dict[str, Any]], one_run_per_group: bool = False) -> list[dict[str, Any]]:

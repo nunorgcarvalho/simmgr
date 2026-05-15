@@ -9,7 +9,7 @@ from .export_registry import export_registry
 from .ingest_manifest import ingest_manifest
 from .init_project import init_project
 from .plan_jobs import plan_jobs
-from .query_runs import query_runs
+from .query_runs import query_runs, should_print_status_summary, status_summary_text
 from .resources import learn_resources
 from .run_group import run_group
 from .run_one import run_one
@@ -96,6 +96,8 @@ def main(argv: list[str] | None = None) -> int:
         print(ingest_manifest(args.project_config, args.manifest, args.global_config))
     elif args.command == "query":
         data = query_runs(args.project_config, args.where, args.status, args.output, args.global_config)
+        if should_print_status_summary(args.status):
+            print(status_summary_text(data, "query results"))
         _print_rows(data)
     elif args.command == "suggest-pilot":
         print(suggest_pilot(args.project_config, args.n_runs, args.output, args.seed, args.global_config))

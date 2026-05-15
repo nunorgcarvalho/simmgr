@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import operator
 import re
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -54,8 +55,7 @@ def query_runs(
             ORDER BY r.run_id
             """,
         )
-    if status is None and where is None:
-        status = "pending"
+    status = effective_status(status)
     if status:
         data = [r for r in data if status_matches(r["status"], status)]
     if where:
@@ -65,12 +65,27 @@ def query_runs(
     return data
 
 
+def effective_status(status: str | None) -> str:
+    return status or "any"
+
+
 def status_matches(actual: str, requested: str) -> bool:
     if requested == "any":
         return True
     if requested == "not_succeeded":
         return actual in NON_COMPLETED_STATUSES and actual != "succeeded"
     return actual == requested
+
+
+def status_summary_text(data: list[dict[str, Any]], label: str = "selected runs") -> str:
+    counts = Counter(str(row.get("status", "")) for row in data)
+    pieces = [f"{status}={count}" for status, count in sorted(counts.items())]
+    summary = ", ".join(pieces) if pieces else "none"
+    return f"Status summary for {label}: {summary}"
+
+
+def should_print_status_summary(status: str | None) -> bool:
+    return effective_status(status) in {"any", "not_succeeded"}
 
 
 def _matches(row: dict[str, Any], expr: str) -> bool:

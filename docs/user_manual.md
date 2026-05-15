@@ -156,7 +156,7 @@ python -m simmgr.cli query --where 'replicate == 1'
 python -m simmgr.cli query --where 'params.N >= 2000'
 ```
 
-If neither `--status` nor `--where` is supplied, `query` defaults to `--status pending`. The shorthand `--status not_succeeded` selects all non-completed runs, and `--status any` disables status filtering. These are virtual statuses for command parsing; they are not stored as actual run statuses.
+If `--status` is not supplied, `query` defaults to `--status any`, which disables status filtering. Whenever the effective status is `any` or `not_succeeded`, SimMgr prints a status-count summary before the rows so you can sanity-check what is included. The shorthand `--status not_succeeded` selects all non-completed runs. These are virtual statuses for command parsing; they are not stored as actual run statuses.
 
 The query language is intentionally small and safe. It supports comparisons on run columns and `params.<name>` values from `params_json`.
 
@@ -281,7 +281,7 @@ After resource learning:
 python -m simmgr.cli plan-jobs --where 'status == "pending"'
 ```
 
-`plan-jobs` accepts the same virtual status values as `query`, so `--status not_succeeded` plans all non-completed runs and `--status any` disables status filtering.
+`plan-jobs` accepts the same virtual status values as `query`. If `--status` is omitted, the default is `any`. SimMgr prints a status-count summary for `any` and `not_succeeded` plans. Use `--status pending` when you only want never-attempted runs, or `--status not_succeeded` when rerunning failed and unfinished work.
 
 Then inspect:
 

@@ -141,7 +141,7 @@ def test_overlapping_manifest_ingest_records_membership(tmp_path: Path) -> None:
     assert memberships == 16
 
 
-def test_query_defaults_to_pending_and_supports_not_succeeded(tmp_path: Path) -> None:
+def test_query_defaults_to_any_and_supports_not_succeeded(tmp_path: Path) -> None:
     project = tmp_path / "project"
     init_project(project)
     config_path = project / "project_config.yaml"
@@ -155,15 +155,15 @@ def test_query_defaults_to_pending_and_supports_not_succeeded(tmp_path: Path) ->
     not_succeeded_rows = query_runs(config_path, status="not_succeeded")
     any_rows = query_runs(config_path, status="any")
     where_not_succeeded_rows = query_runs(config_path, where='status == "not_succeeded"', status="any")
-    assert len(default_rows) == 7
-    assert {row["status"] for row in default_rows} == {"pending"}
+    assert len(default_rows) == 8
+    assert {row["status"] for row in default_rows} == {"pending", "succeeded"}
     assert len(not_succeeded_rows) == 7
     assert "succeeded" not in {row["status"] for row in not_succeeded_rows}
     assert len(any_rows) == 8
     assert len(where_not_succeeded_rows) == 7
 
 
-def test_plan_jobs_status_any_and_not_succeeded(tmp_path: Path) -> None:
+def test_plan_jobs_status_any_and_not_succeeded(tmp_path: Path, capsys) -> None:
     project = tmp_path / "project"
     init_project(project)
     config_path = project / "project_config.yaml"
@@ -173,10 +173,14 @@ def test_plan_jobs_status_any_and_not_succeeded(tmp_path: Path) -> None:
         first_run = conn.execute("SELECT run_id FROM runs ORDER BY run_id LIMIT 1").fetchone()[0]
         conn.execute("UPDATE runs SET status = 'succeeded' WHERE run_id = ?", (first_run,))
         conn.commit()
-    any_plan = plan_jobs(config_path, status="any", generous_resources=True)
+    any_plan = plan_jobs(config_path, generous_resources=True)
     not_succeeded_plan = plan_jobs(config_path, status="not_succeeded", generous_resources=True)
     assert len(read_tsv(any_plan / "selected_runs.tsv")) == 8
     assert len(read_tsv(not_succeeded_plan / "selected_runs.tsv")) == 7
+    captured = capsys.readouterr()
+    assert "Status summary for planned runs: pending=7, succeeded=1" in captured.out
+    assert "Status summary for planned runs: pending=7" in captured.out
+    assert "selection_status: any" in (any_plan / "plan_summary.txt").read_text(encoding="utf-8")
 
 
 def test_suggest_pilot_uses_lowest_unfinished_replicate_and_next_file(tmp_path: Path) -> None:
