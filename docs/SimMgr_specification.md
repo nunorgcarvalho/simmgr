@@ -264,6 +264,8 @@ A user starts a new simulation project with a command conceptually like:
 simmgr init --project-root /path/to/project_sims
 ```
 
+If `--project-root` is omitted, `simmgr init` should read `default_project_config` from the global config and use the parent directory of that project config path as the project root.
+
 This creates:
 
 ```text
@@ -925,7 +927,7 @@ Purpose:
 Inputs:
 
 ```text
---project-root
+--project-root optional
 --global-config optional
 ```
 
@@ -1973,8 +1975,10 @@ The query language can be simple in v1. It does not need to support arbitrary Py
 ### 15.1 Initialize a project
 
 ```text
-simmgr init --project-root /path/to/project_sims
+simmgr init
 ```
+
+This assumes `default_project_config` is set in the global config. Without that setting, pass `--project-root /path/to/project_sims`.
 
 User edits:
 

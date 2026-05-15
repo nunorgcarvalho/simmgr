@@ -83,6 +83,19 @@ def test_manifest_registry_plan_and_local_execution(tmp_path: Path, monkeypatch)
     assert succeeded == 4
 
 
+def test_init_uses_global_default_project_config_parent(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    global_config = tmp_path / "global_config.yaml"
+    global_config.write_text(
+        f"default_project_config: {project / 'project_config.yaml'}\n",
+        encoding="utf-8",
+    )
+    root = init_project(global_config=global_config)
+    assert root == project
+    assert (project / "project_config.yaml").exists()
+    assert (project / "registry" / "simmgr.sqlite").exists()
+
+
 def test_overlapping_manifest_ingest_records_membership(tmp_path: Path) -> None:
     project = tmp_path / "project"
     init_project(project)

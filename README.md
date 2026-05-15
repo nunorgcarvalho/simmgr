@@ -9,13 +9,15 @@ The implementation follows `docs/SimMgr_specification.md`.
 Make sure your shell's `python` command points at the environment you want to use, then set `default_project_config` in `global_config.yaml`. After that, everyday commands can use the active project by default:
 
 ```bash
-python -m simmgr.cli init --project-root /path/to/project
+python -m simmgr.cli init
 python -m simmgr.cli build-manifest
 python -m simmgr.cli ingest-manifest --manifest latest
 python -m simmgr.cli suggest-pilot --n-runs 10
 python -m simmgr.cli plan-jobs --pilot-set pilot_001.tsv --generous-resources --one-run-per-group
 python -m simmgr.cli plan-jobs --where 'status == "pending"'
 ```
+
+If `default_project_config` is not set yet, initialize with `python -m simmgr.cli init --project-root /path/to/project` and then add that project's `project_config.yaml` to `global_config.yaml`.
 
 Inspect the generated `plans/plan_XXX/` directory before submission:
 

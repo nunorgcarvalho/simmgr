@@ -22,7 +22,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     init = sub.add_parser("init")
-    init.add_argument("--project-root", required=True)
+    init.add_argument("--project-root")
     init.add_argument("--global-config")
     init.add_argument("--force", action="store_true")
 

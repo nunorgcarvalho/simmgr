@@ -24,7 +24,15 @@ Use `--project-config` only when you intentionally want to operate on a differen
 
 ## 2. Initialize A Project
 
-Create the project directory once:
+Create the project directory once. If `global_config.yaml` already has `default_project_config` set, SimMgr can infer the project root from the directory containing that file:
+
+```bash
+python -m simmgr.cli init
+```
+
+For example, if `default_project_config` is `/path/to/my_sim_project/project_config.yaml`, then `init` creates `/path/to/my_sim_project`.
+
+You can also provide the root explicitly:
 
 ```bash
 python -m simmgr.cli init --project-root /path/to/my_sim_project
@@ -48,7 +56,7 @@ outputs/
 resource_models/
 ```
 
-Then edit `global_config.yaml` so `default_project_config` points at this new project. This is what makes later commands short.
+If you initialized with `--project-root`, edit `global_config.yaml` so `default_project_config` points at this new project. This is what makes later commands short.
 
 ## 3. Edit `project_config.yaml`
 

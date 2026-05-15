@@ -9,13 +9,13 @@ from .state import DEFAULT_STATE, save_state
 from .tsv import write_tsv
 
 
-def init_project(project_root: str | Path, global_config: str | Path | None = None, force: bool = False) -> Path:
-    root = Path(project_root).expanduser().resolve()
+def init_project(project_root: str | Path | None = None, global_config: str | Path | None = None, force: bool = False) -> Path:
+    global_defaults = load_global_config(global_config)
+    root = _resolve_project_root(project_root, global_defaults)
     config_path = root / "project_config.yaml"
     if config_path.exists() and not force:
         raise SystemExit(f"Refusing to overwrite initialized project at {root}. Use --force to reinitialize.")
 
-    global_defaults = load_global_config(global_config)
     config = make_default_project_config(root, global_defaults)
     paths = config["paths"]
     for key in [
@@ -40,3 +40,11 @@ def init_project(project_root: str | Path, global_config: str | Path | None = No
     initialize(root / paths["registry_dir"] / "simmgr.sqlite")
     return root
 
+
+def _resolve_project_root(project_root: str | Path | None, global_defaults: dict) -> Path:
+    if project_root:
+        return Path(project_root).expanduser().resolve()
+    default_project_config = global_defaults.get("default_project_config")
+    if not default_project_config:
+        raise SystemExit("Pass --project-root or set default_project_config in global_config.yaml")
+    return Path(default_project_config).expanduser().resolve().parent
