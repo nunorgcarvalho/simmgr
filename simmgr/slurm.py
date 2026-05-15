@@ -17,7 +17,7 @@ def sacct_attempt_info(slurm_job_id: str | None, array_task_id: str | None = Non
         job,
         "--parsable2",
         "--noheader",
-        "--format=JobIDRaw,State,ExitCode,ElapsedRaw,MaxRSS",
+        "--format=JobID,JobIDRaw,State,ExitCode,ElapsedRaw,MaxRSS",
     ]
     try:
         result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=10)
@@ -25,20 +25,35 @@ def sacct_attempt_info(slurm_job_id: str | None, array_task_id: str | None = Non
         return {}
     if result.returncode != 0:
         return {}
+    records: list[dict[str, Any]] = []
     for line in result.stdout.splitlines():
         fields = line.split("|")
-        if len(fields) < 5:
+        if len(fields) < 6:
             continue
-        job_raw, state, exit_code, elapsed_raw, max_rss = fields[:5]
-        if job_raw != job and not job_raw.startswith(f"{job}."):
+        job_id, job_raw, state, exit_code, elapsed_raw, max_rss = fields[:6]
+        if job_id != job and not job_id.startswith(f"{job}.") and job_raw != job:
             continue
-        return {
+        records.append({
+            "job_id": job_id,
             "slurm_state": state,
             "exit_code": _parse_exit_code(exit_code),
             "elapsed_seconds": float(elapsed_raw) if elapsed_raw.isdigit() else None,
             "max_rss_gb": _parse_max_rss_gb(max_rss),
-        }
-    return {}
+        })
+    if not records:
+        return {}
+    primary = records[0]
+    for record in records:
+        if classify_slurm_state(record.get("slurm_state")):
+            primary["slurm_state"] = record["slurm_state"]
+            primary["exit_code"] = record.get("exit_code")
+            primary["elapsed_seconds"] = record.get("elapsed_seconds")
+            break
+    for record in records:
+        if record["job_id"].endswith(".batch") and record.get("max_rss_gb") is not None:
+            primary["max_rss_gb"] = record["max_rss_gb"]
+            break
+    return primary
 
 
 def classify_slurm_state(state: str | None) -> str | None:

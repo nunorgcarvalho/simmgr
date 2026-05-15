@@ -203,6 +203,50 @@ def test_group_timeout_preserves_completed_runs_and_marks_unstarted(tmp_path: Pa
     assert statuses == {"not_started_due_to_group_failure"}
 
 
+def test_slurm_stderr_oom_overrides_sigkill_terminal_event(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    init_project(project)
+    config_path = project / "project_config.yaml"
+    manifest = build_manifest(config_path)
+    ingest_manifest(config_path, manifest)
+    plan_dir = plan_jobs(config_path, where="replicate == 1", generous_resources=True, one_run_per_group=True)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    sbatch = fake_bin / "sbatch"
+    sbatch.write_text("#!/usr/bin/env bash\necho Submitted batch job 12345\n", encoding="utf-8")
+    sbatch.chmod(sbatch.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv("PATH", f"{fake_bin}:{os.environ['PATH']}")
+    submit_jobs(config_path, plan_dir.name)
+    submission = read_tsv(plan_dir / "submission.tsv")[0]
+    attempt_log = project / "logs" / "attempts" / f"{submission['attempt_id']}.jsonl"
+    append_jsonl(attempt_log, {"event": "attempt_metadata", "attempt_id": submission["attempt_id"]})
+    append_jsonl(
+        attempt_log,
+        {
+            "event": "attempt_finished",
+            "attempt_id": submission["attempt_id"],
+            "status": "failed_simulator_error",
+            "exit_code": -9,
+            "elapsed_seconds": 5.0,
+        },
+    )
+    slurm_err = project / "logs" / "slurm" / f"{plan_dir.name}_{submission['array_id']}.{submission['slurm_job_id']}_{submission['array_task_index']}.err"
+    slurm_err.write_text("slurmstepd: error: Detected 1 oom_kill event\n", encoding="utf-8")
+
+    import simmgr.collect_status as collect_module
+
+    monkeypatch.setattr(collect_module, "sacct_attempt_info", lambda *_args, **_kwargs: {})
+    counts = collect_status(config_path, plan=plan_dir.name)
+    assert counts["failed_oom"] == 1
+    with connect(project / "registry" / "simmgr.sqlite") as conn:
+        status, exit_reason = conn.execute(
+            "SELECT status, exit_reason FROM attempts WHERE attempt_id = ?",
+            (submission["attempt_id"],),
+        ).fetchone()
+    assert status == "failed_oom"
+    assert exit_reason == "failed_oom"
+
+
 def test_one_run_per_group_planning(tmp_path: Path) -> None:
     project = tmp_path / "project"
     init_project(project)

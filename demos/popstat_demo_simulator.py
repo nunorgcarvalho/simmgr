@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+import traceback
 from pathlib import Path
 
 
@@ -73,7 +74,17 @@ def main() -> int:
         )
         return 0
     except Exception as exc:
-        append(log_path, {"event": "simulator_finished", "status": "failed_simulator_error", "error_message": repr(exc)})
+        append(
+            log_path,
+            {
+                "event": "simulator_finished",
+                "status": "failed_simulator_error",
+                "error_type": type(exc).__name__,
+                "error_message": str(exc),
+                "error_repr": repr(exc),
+                "traceback": traceback.format_exc(),
+            },
+        )
         return 1
 
 

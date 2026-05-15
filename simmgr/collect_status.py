@@ -34,7 +34,7 @@ def collect_status(
     counts: dict[str, int] = {}
     with connect(registry_path(config)) as conn, transaction(conn):
         for att in attempts:
-            status, fields = _classify(att, group_states.get(att["attempt_id"]), group_sizes.get(att["group_id"], 0))
+            status, fields = _classify(config, att, group_states.get(att["attempt_id"]), group_sizes.get(att["group_id"], 0))
             counts[status] = counts.get(status, 0) + 1
             now = utc_now()
             conn.execute(
@@ -65,15 +65,15 @@ def collect_status(
     return counts
 
 
-def _classify(attempt: dict[str, Any], group_state: str | None = None, group_size: int = 0) -> tuple[str, dict[str, Any]]:
+def _classify(config: dict[str, Any], attempt: dict[str, Any], group_state: str | None = None, group_size: int = 0) -> tuple[str, dict[str, Any]]:
     events = read_jsonl(attempt["attempt_log_path"])
     if not events:
         slurm = sacct_attempt_info(attempt.get("slurm_job_id"), attempt.get("slurm_array_task_id"))
-        status = classify_slurm_state(slurm.get("slurm_state"))
+        status = classify_slurm_state(slurm.get("slurm_state")) or _classify_from_slurm_stderr(config, attempt)
         if group_state == "not_started" and status in {"failed_oom", "failed_timeout", "failed_node", "failed_unknown"}:
             return "not_started_due_to_group_failure", {"exit_reason": slurm.get("slurm_state") or "group_failed_before_attempt_started"}
         if status:
-            return status, {"exit_reason": slurm.get("slurm_state"), **_known_slurm_fields(slurm, include_max_rss=(group_size == 1))}
+            return status, {"exit_reason": slurm.get("slurm_state") or status, **_known_slurm_fields(slurm, include_max_rss=(group_size == 1))}
         return ("failed_unknown" if attempt["status"] not in {"planned", "submitted"} else attempt["status"], {"exit_reason": "missing_attempt_log"})
     fields: dict[str, Any] = {}
     metadata = next((e for e in events if e.get("event") == "attempt_metadata"), None)
@@ -91,10 +91,14 @@ def _classify(attempt: dict[str, Any], group_state: str | None = None, group_siz
         fields["elapsed_seconds"] = terminal.get("elapsed_seconds")
         fields["exit_code"] = terminal.get("exit_code")
         status = terminal.get("status") or ("succeeded" if terminal.get("exit_code") == 0 else "failed_simulator_error")
+        slurm = sacct_attempt_info(attempt.get("slurm_job_id"), attempt.get("slurm_array_task_id"))
+        slurm_status = classify_slurm_state(slurm.get("slurm_state")) or _classify_from_slurm_stderr(config, attempt)
+        terminal_succeeded = status == "succeeded" and terminal.get("exit_code") == 0
+        if not terminal_succeeded and slurm_status in {"failed_oom", "failed_timeout", "failed_node"}:
+            return slurm_status, {"exit_reason": slurm.get("slurm_state") or slurm_status, **fields, **_known_slurm_fields(slurm, include_max_rss=(group_size == 1))}
         if status == "succeeded" and simulator_terminal and simulator_terminal.get("status") != "succeeded":
             status = simulator_terminal.get("status", "failed_simulator_error")
         if group_size == 1:
-            slurm = sacct_attempt_info(attempt.get("slurm_job_id"), attempt.get("slurm_array_task_id"))
             if slurm.get("max_rss_gb") is not None:
                 fields["max_rss_gb"] = slurm["max_rss_gb"]
                 fields["max_rss_source"] = "slurm"
@@ -102,10 +106,35 @@ def _classify(attempt: dict[str, Any], group_state: str | None = None, group_siz
     if simulator_terminal:
         return str(simulator_terminal.get("status", "failed_simulator_error")), fields
     slurm = sacct_attempt_info(attempt.get("slurm_job_id"), attempt.get("slurm_array_task_id"))
-    status = classify_slurm_state(slurm.get("slurm_state"))
+    status = classify_slurm_state(slurm.get("slurm_state")) or _classify_from_slurm_stderr(config, attempt)
     if status:
-        return status, {"exit_reason": slurm.get("slurm_state"), **fields, **_known_slurm_fields(slurm, include_max_rss=(group_size == 1))}
+        return status, {"exit_reason": slurm.get("slurm_state") or status, **fields, **_known_slurm_fields(slurm, include_max_rss=(group_size == 1))}
     return "failed_unknown", {"exit_reason": "missing_terminal_event", **fields}
+
+
+def _classify_from_slurm_stderr(config: dict[str, Any], attempt: dict[str, Any]) -> str | None:
+    stderr_path = _slurm_stderr_path(config, attempt)
+    if stderr_path is None or not stderr_path.exists():
+        return None
+    text = stderr_path.read_text(encoding="utf-8", errors="replace").upper()
+    if "OOM" in text or "OUT_OF_MEMORY" in text:
+        return "failed_oom"
+    if "TIMEOUT" in text or "TIME LIMIT" in text or "DUE TO TIME LIMIT" in text:
+        return "failed_timeout"
+    if "NODE_FAIL" in text or "PREEMPT" in text or "BOOT_FAIL" in text:
+        return "failed_node"
+    return None
+
+
+def _slurm_stderr_path(config: dict[str, Any], attempt: dict[str, Any]) -> Path | None:
+    required = [attempt.get("plan_id"), attempt.get("array_id"), attempt.get("slurm_job_id"), attempt.get("slurm_array_task_id")]
+    if any(value in (None, "") for value in required):
+        return None
+    return (
+        configured_path(config, "logs_dir")
+        / "slurm"
+        / f"{attempt['plan_id']}_{attempt['array_id']}.{attempt['slurm_job_id']}_{attempt['slurm_array_task_id']}.err"
+    )
 
 
 def _known_slurm_fields(slurm: dict[str, Any], include_max_rss: bool = False) -> dict[str, Any]:
