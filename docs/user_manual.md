@@ -22,6 +22,14 @@ python -m simmgr.cli plan-jobs --where 'status == "pending"'
 
 Use `--project-config` only when you intentionally want to operate on a different project.
 
+You can also inspect and operate the active project through the local dashboard:
+
+```bash
+python -m simmgr.cli dashboard
+```
+
+See `docs/dashboard_user_guide.md` for dashboard details.
+
 ## 2. Initialize A Project
 
 Create the project directory once. If `global_config.yaml` already has `default_project_config` set, SimMgr can infer the project root from the directory containing that file:

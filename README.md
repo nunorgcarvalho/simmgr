@@ -32,4 +32,10 @@ python -m simmgr.cli collect-status --plan plan_001
 python -m simmgr.cli export-registry
 ```
 
-See `docs/user_manual.md` for the simulator contract and demo notes. The repo also includes `demos/popstat_demo_simulator.py` plus a small seeded demo project under `demos/popstat_demo_project/`.
+Launch the local dashboard for the active project:
+
+```bash
+python -m simmgr.cli dashboard
+```
+
+See `docs/user_manual.md` for the simulator contract and demo notes, and `docs/dashboard_user_guide.md` for the dashboard. The repo also includes `demos/popstat_demo_simulator.py` plus seeded demo projects under `demos/`.
