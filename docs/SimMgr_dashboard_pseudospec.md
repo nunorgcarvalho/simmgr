@@ -18,10 +18,9 @@ The dashboard is intended to be **local-only**. It does not need authentication,
 
 ## 2. Recommended Implementation
 
-The dashboard should be implemented in Python, ideally using either:
+The dashboard should be implemented in Python, ideally using:
 
-- **Shiny for Python**, preferred for a structured long-term dashboard; or
-- **Streamlit**, acceptable for a faster prototype.
+- **Shiny for Python**, preferred for a structured long-term dashboard
 
 Codex may choose the specific framework, but the app should run locally with a command conceptually like:
 
@@ -452,8 +451,6 @@ A simple implementation can write JSONL command logs to:
 ```text
 logs/dashboard_commands/
 ```
-
-Alternatively, the SQLite registry may include a `dashboard_commands` or `command_history` table.
 
 Recommended event information:
 
