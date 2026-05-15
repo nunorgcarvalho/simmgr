@@ -1022,11 +1022,14 @@ Behavior:
 Purpose:
 
 - select logical runs based on run status, attempt status, manifest ID, replicate number, or parameters inside `params_json`.
+- default to `status == "pending"` when neither a status nor a where expression is supplied.
+- support the virtual status shorthand `not_succeeded` for all non-completed runs; this is query syntax, not a stored run status.
 
 Example selectors:
 
 ```text
 status == "pending"
+status == "not_succeeded"
 status != "succeeded"
 status == "failed_oom"
 status == "failed_timeout"

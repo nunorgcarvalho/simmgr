@@ -15,6 +15,7 @@ from simmgr.ingest_manifest import ingest_manifest
 from simmgr.init_project import init_project
 from simmgr.logging_utils import append_jsonl
 from simmgr.plan_jobs import plan_jobs
+from simmgr.query_runs import query_runs
 from simmgr.resources import learn_resources
 from simmgr.registry import connect
 from simmgr.run_group import run_group
@@ -94,6 +95,24 @@ def test_overlapping_manifest_ingest_records_membership(tmp_path: Path) -> None:
     with sqlite3.connect(project / "registry" / "simmgr.sqlite") as conn:
         memberships = conn.execute("SELECT COUNT(*) FROM manifest_runs").fetchone()[0]
     assert memberships == 16
+
+
+def test_query_defaults_to_pending_and_supports_not_succeeded(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    init_project(project)
+    config_path = project / "project_config.yaml"
+    manifest = build_manifest(config_path)
+    ingest_manifest(config_path, manifest)
+    with connect(project / "registry" / "simmgr.sqlite") as conn:
+        first_run = conn.execute("SELECT run_id FROM runs ORDER BY run_id LIMIT 1").fetchone()[0]
+        conn.execute("UPDATE runs SET status = 'succeeded' WHERE run_id = ?", (first_run,))
+        conn.commit()
+    default_rows = query_runs(config_path)
+    not_succeeded_rows = query_runs(config_path, status="not_succeeded")
+    assert len(default_rows) == 7
+    assert {row["status"] for row in default_rows} == {"pending"}
+    assert len(not_succeeded_rows) == 7
+    assert "succeeded" not in {row["status"] for row in not_succeeded_rows}
 
 
 def test_ram_predictions_are_capped_in_gb(tmp_path: Path) -> None:

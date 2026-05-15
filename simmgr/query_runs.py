@@ -20,6 +20,20 @@ OPS = {
 }
 
 QUERY_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s*(==|!=|>=|<=|>|<)\s*(.+?)\s*$")
+NON_COMPLETED_STATUSES = {
+    "pending",
+    "planned",
+    "submitted",
+    "running",
+    "failed_oom",
+    "failed_timeout",
+    "failed_node",
+    "failed_simulator_error",
+    "failed_validation",
+    "failed_unknown",
+    "not_started_due_to_group_failure",
+    "submission_failed",
+}
 
 
 def query_runs(
@@ -40,13 +54,21 @@ def query_runs(
             ORDER BY r.run_id
             """,
         )
+    if status is None and where is None:
+        status = "pending"
     if status:
-        data = [r for r in data if r["status"] == status]
+        data = [r for r in data if _status_matches(r["status"], status)]
     if where:
         data = [r for r in data if _matches(r, where)]
     if output:
         write_tsv(output, data, list(data[0].keys()) if data else ["run_id"])
     return data
+
+
+def _status_matches(actual: str, requested: str) -> bool:
+    if requested == "not_succeeded":
+        return actual in NON_COMPLETED_STATUSES and actual != "succeeded"
+    return actual == requested
 
 
 def _matches(row: dict[str, Any], expr: str) -> bool:
@@ -82,4 +104,3 @@ def _coerce(text: str, actual: Any) -> Any:
         return int(text)
     except ValueError:
         return text
-

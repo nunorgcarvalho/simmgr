@@ -130,10 +130,14 @@ Ingesting records unique parameter sets and logical runs in `registry/simmgr.sql
 Use `query` to inspect the registry:
 
 ```bash
+python -m simmgr.cli query
 python -m simmgr.cli query --status pending
+python -m simmgr.cli query --status not_succeeded
 python -m simmgr.cli query --where 'replicate == 1'
 python -m simmgr.cli query --where 'params.N >= 2000'
 ```
+
+If neither `--status` nor `--where` is supplied, `query` defaults to `--status pending`. The shorthand `--status not_succeeded` selects all non-completed runs; it is not stored as an actual run status.
 
 The query language is intentionally small and safe. It supports comparisons on run columns and `params.<name>` values from `params_json`.
 
