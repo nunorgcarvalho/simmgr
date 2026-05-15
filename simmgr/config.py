@@ -55,20 +55,17 @@ DEFAULT_GLOBAL_CONFIG: dict[str, Any] = {
 DEFAULT_SIMULATION_SPEC: dict[str, Any] = {
     "default_parameters": {
         "simulator_version": 1,
-        "N": 500,
-        "num_variants": 500,
-        "h2": 0.5,
+        "param1": 1,
+        "param2": 0,
         "replicates": 1,
     },
     "simulation_sets": [
         {
-            "name": "demo_small",
-            "grid": {"N": [200, 500], "num_variants": [100], "h2": [0.2, 0.5]},
-            "replicates": 2,
+            "grid": {"param1": [1,2,3,4], "param2": [0, 0.5, 1]},
         }
     ],
     "resource_model": {
-        "numeric_parameters": ["N", "num_variants"],
+        "numeric_parameters": ["param1"],
         "categorical_parameters": [],
         "include_log_terms": True,
         "include_square_terms": False,

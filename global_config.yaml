@@ -1,4 +1,4 @@
-default_project_config: /n/groups/price/nuno/simmgr/demos/popstat_demo_project/project_config.yaml
+default_project_config: /n/groups/price/nuno/simmgr/demos/demo2/project_config.yaml
 
 simulator_defaults:
   arguments:
