@@ -109,10 +109,30 @@ def test_query_defaults_to_pending_and_supports_not_succeeded(tmp_path: Path) ->
         conn.commit()
     default_rows = query_runs(config_path)
     not_succeeded_rows = query_runs(config_path, status="not_succeeded")
+    any_rows = query_runs(config_path, status="any")
+    where_not_succeeded_rows = query_runs(config_path, where='status == "not_succeeded"', status="any")
     assert len(default_rows) == 7
     assert {row["status"] for row in default_rows} == {"pending"}
     assert len(not_succeeded_rows) == 7
     assert "succeeded" not in {row["status"] for row in not_succeeded_rows}
+    assert len(any_rows) == 8
+    assert len(where_not_succeeded_rows) == 7
+
+
+def test_plan_jobs_status_any_and_not_succeeded(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    init_project(project)
+    config_path = project / "project_config.yaml"
+    manifest = build_manifest(config_path)
+    ingest_manifest(config_path, manifest)
+    with connect(project / "registry" / "simmgr.sqlite") as conn:
+        first_run = conn.execute("SELECT run_id FROM runs ORDER BY run_id LIMIT 1").fetchone()[0]
+        conn.execute("UPDATE runs SET status = 'succeeded' WHERE run_id = ?", (first_run,))
+        conn.commit()
+    any_plan = plan_jobs(config_path, status="any", generous_resources=True)
+    not_succeeded_plan = plan_jobs(config_path, status="not_succeeded", generous_resources=True)
+    assert len(read_tsv(any_plan / "selected_runs.tsv")) == 8
+    assert len(read_tsv(not_succeeded_plan / "selected_runs.tsv")) == 7
 
 
 def test_ram_predictions_are_capped_in_gb(tmp_path: Path) -> None:

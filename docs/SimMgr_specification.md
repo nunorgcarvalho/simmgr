@@ -1024,12 +1024,14 @@ Purpose:
 - select logical runs based on run status, attempt status, manifest ID, replicate number, or parameters inside `params_json`.
 - default to `status == "pending"` when neither a status nor a where expression is supplied.
 - support the virtual status shorthand `not_succeeded` for all non-completed runs; this is query syntax, not a stored run status.
+- support the virtual status shorthand `any` to disable status filtering; this is query syntax, not a stored run status.
 
 Example selectors:
 
 ```text
 status == "pending"
 status == "not_succeeded"
+status == "any"
 status != "succeeded"
 status == "failed_oom"
 status == "failed_timeout"
@@ -1109,7 +1111,7 @@ Inputs may include:
 ```text
 --project-config optional
 --where optional query expression
---status optional
+--status optional; supports virtual values any and not_succeeded
 --pilot-set pilot_001.tsv optional
 --resource-model latest optional
 --retry-policy optional

@@ -57,7 +57,7 @@ def query_runs(
     if status is None and where is None:
         status = "pending"
     if status:
-        data = [r for r in data if _status_matches(r["status"], status)]
+        data = [r for r in data if status_matches(r["status"], status)]
     if where:
         data = [r for r in data if _matches(r, where)]
     if output:
@@ -65,7 +65,9 @@ def query_runs(
     return data
 
 
-def _status_matches(actual: str, requested: str) -> bool:
+def status_matches(actual: str, requested: str) -> bool:
+    if requested == "any":
+        return True
     if requested == "not_succeeded":
         return actual in NON_COMPLETED_STATUSES and actual != "succeeded"
     return actual == requested
@@ -78,6 +80,9 @@ def _matches(row: dict[str, Any], expr: str) -> bool:
     key, op, raw_value = match.groups()
     actual = _lookup(row, key)
     expected = _coerce(raw_value, actual)
+    if key == "status" and op in {"==", "!="} and expected in {"any", "not_succeeded"}:
+        matched = status_matches(str(actual), str(expected))
+        return matched if op == "==" else not matched
     return bool(OPS[op](actual, expected))
 
 

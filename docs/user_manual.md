@@ -133,11 +133,12 @@ Use `query` to inspect the registry:
 python -m simmgr.cli query
 python -m simmgr.cli query --status pending
 python -m simmgr.cli query --status not_succeeded
+python -m simmgr.cli query --status any
 python -m simmgr.cli query --where 'replicate == 1'
 python -m simmgr.cli query --where 'params.N >= 2000'
 ```
 
-If neither `--status` nor `--where` is supplied, `query` defaults to `--status pending`. The shorthand `--status not_succeeded` selects all non-completed runs; it is not stored as an actual run status.
+If neither `--status` nor `--where` is supplied, `query` defaults to `--status pending`. The shorthand `--status not_succeeded` selects all non-completed runs, and `--status any` disables status filtering. These are virtual statuses for command parsing; they are not stored as actual run statuses.
 
 The query language is intentionally small and safe. It supports comparisons on run columns and `params.<name>` values from `params_json`.
 
@@ -251,6 +252,8 @@ After resource learning:
 ```bash
 python -m simmgr.cli plan-jobs --where 'status == "pending"'
 ```
+
+`plan-jobs` accepts the same virtual status values as `query`, so `--status not_succeeded` plans all non-completed runs and `--status any` disables status filtering.
 
 Then inspect:
 

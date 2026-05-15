@@ -112,7 +112,7 @@ def _select_runs(config: dict[str, Any], where: str | None, status: str | None, 
             path = configured_path(config, "pilot_sets_dir") / path
         wanted = {r["run_id"] for r in read_tsv(path) if r.get("run_id")}
         return [r for r in query_runs(config["_project_config_path"], where=where, status=status) if r["run_id"] in wanted]
-    return query_runs(config["_project_config_path"], where=where, status=status or "pending")
+    return query_runs(config["_project_config_path"], where=where, status=status)
 
 
 def _selection_reason(where: str | None, status: str | None, pilot_set: str | Path | None) -> str:
