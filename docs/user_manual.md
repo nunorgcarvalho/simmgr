@@ -234,7 +234,7 @@ Once pilot attempts have succeeded:
 python -m simmgr.cli learn-resources
 ```
 
-This writes `resource_models/resource_model_XXX.json`. SimMgr fits simple log-linear ridge regressions for runtime and memory. The model is deliberately lightweight and inspectable.
+This writes `resource_models/resource_model_XXX.json`. SimMgr fits simple log-linear ridge regressions for runtime and, when trustworthy Slurm-attributed per-run RSS is available, memory. The model is deliberately lightweight and inspectable.
 
 A key caveat: a learned model can only extrapolate responsibly if the pilot data covers the resource-relevant range. If pilots only include very small `N`, predictions for large `N` may be unstable. The `max_ram_gb` ceiling protects the cluster plan from impossible memory requests, but it does not magically make the extrapolation scientifically trustworthy.
 
@@ -255,6 +255,14 @@ plans/plan_XXX/sbatch_commands.sh
 ```
 
 If many rows are capped, run additional pilots in the capped region before submitting production.
+
+After `collect-status --plan plan_XXX`, SimMgr also writes:
+
+```text
+plans/plan_XXX/resource_assessment.tsv
+```
+
+This compares predicted and observed resources for attempts in that plan. Runtime is assessed per run from the SimMgr wrapper's `attempt_finished.elapsed_seconds` event. RAM is only assessed when SimMgr can attribute memory usage from Slurm accounting; simulator-reported RAM is not treated as authoritative.
 
 ## 13. Retry Failures
 
@@ -306,8 +314,10 @@ python simulator.py \
 Your simulator should append a terminal event to the provided log path:
 
 ```json
-{"event":"simulator_finished","status":"succeeded","max_rss_gb":2.3}
+{"event":"simulator_finished","status":"succeeded"}
 ```
+
+Do not have the simulator guess or self-report RAM usage for SimMgr resource learning. SimMgr only records RAM when it can be attributed through Slurm accounting. For grouped sequential runs, ordinary batch-level MaxRSS is usually group-level rather than run-level, so SimMgr leaves per-run RAM blank unless it can attribute the value safely.
 
 For controlled simulator errors:
 

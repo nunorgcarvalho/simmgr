@@ -12,6 +12,7 @@ from simmgr.config import load_project_config
 from simmgr.export_registry import export_registry
 from simmgr.ingest_manifest import ingest_manifest
 from simmgr.init_project import init_project
+from simmgr.logging_utils import append_jsonl
 from simmgr.plan_jobs import plan_jobs
 from simmgr.registry import connect
 from simmgr.run_group import run_group
@@ -35,7 +36,7 @@ def test_manifest_registry_plan_and_local_execution(tmp_path: Path, monkeypatch)
             args = parser.parse_args()
             Path(args.output_dir).mkdir(parents=True, exist_ok=True)
             with open(args.log_path, "a", encoding="utf-8") as handle:
-                handle.write(json.dumps({"event": "simulator_finished", "status": "succeeded", "max_rss_gb": 1.25}) + "\\n")
+                handle.write(json.dumps({"event": "simulator_finished", "status": "succeeded"}) + "\\n")
             """
         ),
         encoding="utf-8",
@@ -66,6 +67,10 @@ def test_manifest_registry_plan_and_local_execution(tmp_path: Path, monkeypatch)
     assert run_group(config_path, plan_dir.name, array_id="array_001", array_task_index=1) == 0
     counts = collect_status(config_path, plan=plan_dir.name)
     assert counts == {"succeeded": 4}
+    assessment = read_tsv(plan_dir / "resource_assessment.tsv")
+    assert assessment
+    assert "observed_time_minutes" in assessment[0]
+    assert "observed_max_rss_gb" in assessment[0]
 
     exports = export_registry(config_path)
     assert (exports / "runs.tsv").exists()
@@ -102,3 +107,56 @@ def test_ram_predictions_are_capped_in_gb(tmp_path: Path) -> None:
     predictions = read_tsv(plan_dir / "resource_predictions.tsv")
     assert {row["allocated_ram_gb"] for row in predictions} == {"2"}
     assert {row["resource_limit_status"] for row in predictions} == {"ram_capped"}
+
+
+def test_group_timeout_preserves_completed_runs_and_marks_unstarted(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    init_project(project)
+    config_path = project / "project_config.yaml"
+    manifest = build_manifest(config_path)
+    ingest_manifest(config_path, manifest)
+    plan_dir = plan_jobs(config_path, where="replicate == 1", generous_resources=True)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    sbatch = fake_bin / "sbatch"
+    sbatch.write_text("#!/usr/bin/env bash\necho Submitted batch job 12345\n", encoding="utf-8")
+    sbatch.chmod(sbatch.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv("PATH", f"{fake_bin}:{os.environ['PATH']}")
+    submit_jobs(config_path, plan_dir.name)
+    submissions = read_tsv(plan_dir / "submission.tsv")
+    first = submissions[0]
+    first_log = project / "logs" / "attempts" / f"{first['attempt_id']}.jsonl"
+    append_jsonl(first_log, {"event": "attempt_metadata", "attempt_id": first["attempt_id"]})
+    append_jsonl(
+        first_log,
+        {
+            "event": "attempt_finished",
+            "attempt_id": first["attempt_id"],
+            "status": "succeeded",
+            "exit_code": 0,
+            "elapsed_seconds": 12.0,
+        },
+    )
+    group_log = project / "logs" / "groups" / f"{plan_dir.name}_{first['group_id']}.jsonl"
+    append_jsonl(group_log, {"event": "group_started", "plan_id": plan_dir.name, "group_id": first["group_id"]})
+    append_jsonl(group_log, {"event": "group_run_started", "attempt_id": first["attempt_id"], "run_id": first["run_id"]})
+    append_jsonl(group_log, {"event": "group_run_finished", "attempt_id": first["attempt_id"], "exit_code": 0})
+
+    import simmgr.collect_status as collect_module
+
+    monkeypatch.setattr(
+        collect_module,
+        "sacct_attempt_info",
+        lambda *_args, **_kwargs: {"slurm_state": "TIMEOUT", "exit_code": 0, "elapsed_seconds": 3600},
+    )
+    counts = collect_status(config_path, plan=plan_dir.name)
+    assert counts == {"succeeded": 1, "not_started_due_to_group_failure": 3}
+    with connect(project / "registry" / "simmgr.sqlite") as conn:
+        statuses = {
+            row[0]
+            for row in conn.execute(
+                "SELECT status FROM attempts WHERE plan_id = ? AND attempt_id != ?",
+                (plan_dir.name, first["attempt_id"]),
+            )
+        }
+    assert statuses == {"not_started_due_to_group_failure"}

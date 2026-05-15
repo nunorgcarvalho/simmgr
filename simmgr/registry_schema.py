@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS attempts (
   ended_at TEXT,
   elapsed_seconds REAL,
   max_rss_gb REAL,
+  max_rss_source TEXT,
   exit_code INTEGER,
   exit_reason TEXT,
   updated_at TEXT NOT NULL,

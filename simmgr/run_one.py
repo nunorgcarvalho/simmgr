@@ -81,17 +81,15 @@ def run_one(
     result = subprocess.run(command, check=False)
     elapsed = time.time() - start
     status = "succeeded" if result.returncode == 0 else "failed_simulator_error"
-    append_jsonl(
-        log_path,
-        {
-            "event": "attempt_finished",
-            "attempt_id": attempt_id,
-            "attempt": attempt["attempt"],
-            "status": status,
-            "exit_code": result.returncode,
-            "elapsed_seconds": elapsed,
-        },
-    )
+    terminal_event = {
+        "event": "attempt_finished",
+        "attempt_id": attempt_id,
+        "attempt": attempt["attempt"],
+        "status": status,
+        "exit_code": result.returncode,
+        "elapsed_seconds": elapsed,
+    }
+    append_jsonl(log_path, terminal_event)
     return int(result.returncode)
 
 

@@ -69,7 +69,6 @@ def main() -> int:
                 "event": "simulator_finished",
                 "status": "succeeded",
                 "elapsed_seconds": time.time() - start,
-                "max_rss_gb": 0.25 + n * m / 5_000_000,
             },
         )
         return 0

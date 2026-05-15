@@ -1260,6 +1260,7 @@ Behavior:
 - Use simulator terminal event for simulator-level status.
 - Use Slurm accounting to detect OOM, timeout, preemption, node failure, or missing terminal events.
 - If group died before some runs started, mark those attempts appropriately.
+- If a grouped Slurm allocation times out after earlier runs completed, completed runs should remain completed and retain their per-run elapsed time for resource-model assessment.
 - If an attempt succeeded but expected log/results are invalid, classify as failed validation if validation is implemented.
 - Use transactions when updating attempts and the summarized run status.
 
@@ -1402,6 +1403,8 @@ The `attempt_finished` event is the main event that `collect-status` should look
 
 If Slurm kills the process due to OOM or timeout, this event may be absent. In that case `collect-status` must use Slurm accounting and group logs.
 
+`run-one` should record per-run elapsed time in `attempt_finished.elapsed_seconds`. Per-run RAM usage should be recorded only when SimMgr can attribute it through Slurm accounting. Project simulators should not guess RAM usage for SimMgr's resource model. In grouped sequential jobs, ordinary Slurm batch MaxRSS is group-level unless each run is represented by an attributable Slurm step, so SimMgr should leave per-run RAM blank rather than pretending group-level RSS belongs to every run.
+
 ---
 
 ### 8.6 Seeds
@@ -1432,7 +1435,7 @@ Resource modeling uses:
 - selected numeric parameters;
 - selected categorical parameters;
 - observed elapsed time from successful attempts in the `attempts` table;
-- observed max RSS from successful attempts in the `attempts` table;
+- observed max RSS from successful attempts in the `attempts` table when the value is Slurm-attributed to the individual run;
 - failure information from OOM and timeout attempts in the `attempts` table.
 
 The resource-relevant parameters are specified in `simulation_spec.yaml`.
@@ -1472,6 +1475,8 @@ Prefer log-scale models:
 log(runtime_seconds)
 log(max_rss_gb)
 ```
+
+The runtime model can be trained from SimMgr wrapper elapsed times. The memory model should only train on Slurm-attributed per-run RSS values. If grouped sequential jobs only expose group-level MaxRSS, SimMgr should not use that value as per-run memory training data.
 
 Candidate features may include:
 
@@ -1566,6 +1571,14 @@ Required columns:
 | `resource_limit_status` | `ok`, `ram_capped`, `time_capped`, or both if planning ceilings were applied |
 
 When attempts are created, allocated resource fields are copied into the SQLite `attempts` table.
+
+After collection, SimMgr may write:
+
+```text
+plans/plan_007/resource_assessment.tsv
+```
+
+This compares predicted time/RAM to observed per-attempt elapsed time and Slurm-attributed per-run RSS when available.
 
 ---
 

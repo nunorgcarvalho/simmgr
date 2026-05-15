@@ -49,6 +49,9 @@ def _migrate_if_needed(conn: sqlite3.Connection) -> None:
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(attempts)").fetchall()}
     if "allocated_ram_mb" in columns or "max_rss_mb" in columns:
         _rebuild_attempts_table_with_gb(conn, columns)
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(attempts)").fetchall()}
+    if "max_rss_source" not in columns:
+        conn.execute("ALTER TABLE attempts ADD COLUMN max_rss_source TEXT")
     conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     conn.execute(
         "INSERT INTO registry_metadata(key, value) VALUES ('schema_version', ?) "
@@ -90,6 +93,7 @@ def _rebuild_attempts_table_with_gb(conn: sqlite3.Connection, columns: set[str])
           ended_at TEXT,
           elapsed_seconds REAL,
           max_rss_gb REAL,
+          max_rss_source TEXT,
           exit_code INTEGER,
           exit_reason TEXT,
           updated_at TEXT NOT NULL,
@@ -105,12 +109,12 @@ def _rebuild_attempts_table_with_gb(conn: sqlite3.Connection, columns: set[str])
           attempt_id, run_id, param_set_id, replicate, attempt, status, plan_id, group_id,
           array_id, slurm_job_id, slurm_array_task_id, allocated_time_minutes,
           allocated_ram_gb, allocated_cpus, attempt_log_path, created_at, submitted_at,
-          started_at, ended_at, elapsed_seconds, max_rss_gb, exit_code, exit_reason, updated_at
+          started_at, ended_at, elapsed_seconds, max_rss_gb, max_rss_source, exit_code, exit_reason, updated_at
         )
         SELECT attempt_id, run_id, param_set_id, replicate, attempt, status, plan_id, group_id,
           array_id, slurm_job_id, slurm_array_task_id, allocated_time_minutes,
           {allocated_expr}, allocated_cpus, attempt_log_path, created_at, submitted_at,
-          started_at, ended_at, elapsed_seconds, {max_rss_expr}, exit_code, exit_reason, updated_at
+          started_at, ended_at, elapsed_seconds, {max_rss_expr}, NULL, exit_code, exit_reason, updated_at
         FROM attempts
         """
     )

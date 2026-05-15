@@ -44,26 +44,31 @@ def learn_resources(project_config: str | Path | None = None, global_config: str
     spec = load_yaml(project_path(config, config["paths"]["simulation_spec"]))
     feature_cfg = spec.get("resource_model", {})
     with connect(registry_path(config)) as conn:
-        data = rows(
+        runtime_data = rows(
             conn,
             """
-            SELECT a.elapsed_seconds, a.max_rss_gb, p.params_json
+            SELECT a.elapsed_seconds, p.params_json
             FROM attempts a JOIN param_sets p USING(param_set_id)
-            WHERE a.status = 'succeeded' AND a.elapsed_seconds IS NOT NULL AND a.max_rss_gb IS NOT NULL
+            WHERE a.status = 'succeeded' AND a.elapsed_seconds IS NOT NULL
             """,
         )
-    if len(data) < 2:
-        raise SystemExit("Need at least two successful attempts with elapsed_seconds and max_rss_gb to learn resources")
-    feature_names, matrix = _feature_matrix([parse_params_json(r["params_json"]) for r in data], feature_cfg)
+        memory_data = rows(
+            conn,
+            """
+            SELECT a.max_rss_gb, p.params_json
+            FROM attempts a JOIN param_sets p USING(param_set_id)
+            WHERE a.status = 'succeeded' AND a.max_rss_gb IS NOT NULL AND a.max_rss_source = 'slurm'
+            """,
+        )
+    if len(runtime_data) < 2:
+        raise SystemExit("Need at least two successful attempts with elapsed_seconds to learn resources")
+    feature_names, matrix = _feature_matrix([parse_params_json(r["params_json"]) for r in runtime_data], feature_cfg)
     x_scaled, scaling = _standardize_matrix(matrix, feature_names)
     x = np.column_stack([np.ones(len(x_scaled)), x_scaled])
-    runtime_y = np.log(np.maximum([float(r["elapsed_seconds"]) for r in data], 1e-6))
-    memory_y = np.log(np.maximum([float(r["max_rss_gb"]) for r in data], 1e-6))
+    runtime_y = np.log(np.maximum([float(r["elapsed_seconds"]) for r in runtime_data], 1e-6))
     ridge_lambda = float(feature_cfg.get("ridge_lambda", 1.0))
     runtime_coef = _fit_ridge(x, runtime_y, ridge_lambda)
-    memory_coef = _fit_ridge(x, memory_y, ridge_lambda)
     runtime_resid = runtime_y - x @ runtime_coef
-    memory_resid = memory_y - x @ memory_coef
     number = next_number(state_path(config), "last_resource_model_number")
     model_id = f"resource_model_{number:03d}"
     coef_names = ["intercept"] + feature_names
@@ -71,7 +76,9 @@ def learn_resources(project_config: str | Path | None = None, global_config: str
         "resource_model_id": model_id,
         "created_at": utc_now(),
         "model_type": "log_linear_regression",
-        "training_attempt_count": len(data),
+        "training_attempt_count": len(runtime_data),
+        "runtime_training_attempt_count": len(runtime_data),
+        "memory_training_attempt_count": len(memory_data),
         "features": feature_cfg,
         "feature_names": feature_names,
         "feature_scaling": scaling,
@@ -79,14 +86,25 @@ def learn_resources(project_config: str | Path | None = None, global_config: str
         "runtime_model": {
             "response": "log_runtime_seconds",
             "coefficients": dict(zip(coef_names, map(float, runtime_coef))),
-            "residual_sd": float(np.std(runtime_resid, ddof=1)) if len(data) > 1 else 0.0,
+            "residual_sd": float(np.std(runtime_resid, ddof=1)) if len(runtime_data) > 1 else 0.0,
         },
-        "memory_model": {
-            "response": "log_max_rss_gb",
-            "coefficients": dict(zip(coef_names, map(float, memory_coef))),
-            "residual_sd": float(np.std(memory_resid, ddof=1)) if len(data) > 1 else 0.0,
-        },
+        "memory_model": None,
     }
+    if len(memory_data) >= 2:
+        memory_feature_names, memory_matrix = _feature_matrix([parse_params_json(r["params_json"]) for r in memory_data], feature_cfg)
+        memory_x_scaled, memory_scaling = _standardize_matrix(memory_matrix, memory_feature_names)
+        memory_x = np.column_stack([np.ones(len(memory_x_scaled)), memory_x_scaled])
+        memory_y = np.log(np.maximum([float(r["max_rss_gb"]) for r in memory_data], 1e-6))
+        memory_coef = _fit_ridge(memory_x, memory_y, ridge_lambda)
+        memory_resid = memory_y - memory_x @ memory_coef
+        memory_coef_names = ["intercept"] + memory_feature_names
+        model["memory_feature_names"] = memory_feature_names
+        model["memory_feature_scaling"] = memory_scaling
+        model["memory_model"] = {
+            "response": "log_max_rss_gb",
+            "coefficients": dict(zip(memory_coef_names, map(float, memory_coef))),
+            "residual_sd": float(np.std(memory_resid, ddof=1)) if len(memory_data) > 1 else 0.0,
+        }
     out = configured_path(config, "resource_models_dir") / f"{model_id}.json"
     out.write_text(json.dumps(model, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return out
@@ -111,6 +129,9 @@ def predict_for_runs(config: dict[str, Any], run_rows: list[dict[str, Any]], res
             predicted_time = predicted_seconds / 60.0
             reason = "learned model"
             model_id = model["resource_model_id"]
+            if predicted_ram is None:
+                predicted_ram = float(resources["default_ram_gb"])
+                reason = "learned runtime, fallback memory"
         else:
             predicted_time = float(resources["default_time_minutes"])
             predicted_ram = float(resources["default_ram_gb"])
@@ -183,7 +204,7 @@ def _feature_matrix(params_list: list[dict[str, Any]], feature_cfg: dict[str, An
     return names, matrix
 
 
-def _predict_from_model(model: dict[str, Any], params: dict[str, Any]) -> tuple[float, float]:
+def _predict_from_model(model: dict[str, Any], params: dict[str, Any]) -> tuple[float, float | None]:
     names, matrix = _feature_matrix([params], model.get("features", {}))
     feature_values = dict(zip(names, matrix[0].tolist()))
     scaling = model.get("feature_scaling")
@@ -195,7 +216,19 @@ def _predict_from_model(model: dict[str, Any], params: dict[str, Any]) -> tuple[
         }
     values = {"intercept": 1.0, **feature_values}
     runtime_log = sum(float(coef) * values.get(name, 0.0) for name, coef in model["runtime_model"]["coefficients"].items())
-    memory_log = sum(float(coef) * values.get(name, 0.0) for name, coef in model["memory_model"]["coefficients"].items())
+    if not model.get("memory_model"):
+        return math.exp(runtime_log), None
+    memory_values = values
+    if model.get("memory_feature_scaling"):
+        memory_names, memory_matrix = _feature_matrix([params], model.get("features", {}))
+        raw_memory_values = dict(zip(memory_names, memory_matrix[0].tolist()))
+        memory_values = {
+            name: (raw_memory_values.get(name, 0.0) - float(model["memory_feature_scaling"].get(name, {}).get("mean", 0.0)))
+            / float(model["memory_feature_scaling"].get(name, {}).get("scale", 1.0) or 1.0)
+            for name in model.get("memory_feature_names", memory_names)
+        }
+        memory_values = {"intercept": 1.0, **memory_values}
+    memory_log = sum(float(coef) * memory_values.get(name, 0.0) for name, coef in model["memory_model"]["coefficients"].items())
     memory = math.exp(memory_log)
     if model.get("memory_model", {}).get("response") == "log_max_rss_mb":
         memory /= 1024.0
