@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import json
 from pathlib import Path
 from typing import Any
@@ -45,7 +46,7 @@ def create_app(project_config: str | Path | None = None, global_config: str | Pa
         id="page",
         selected="Overview",
         header=ui.tags.style(_CSS),
-        fillable=True,
+        fillable=False,
     )
 
     def server(input, output, session):
@@ -104,7 +105,14 @@ def create_app(project_config: str | Path | None = None, global_config: str | Pa
             touch()
             return _bar_plot(overview(cfg())["attempt_status_counts"], "Attempts by status", "Attempts")
 
-        @render.data_frame
+        def input_value(name: str, default: str = "") -> str:
+            try:
+                value = getattr(input, name)()
+            except Exception:
+                return default
+            return default if value is None else str(value)
+
+        @render.ui
         def runs_table():
             touch()
             data = _filter_runs(
@@ -115,7 +123,8 @@ def create_app(project_config: str | Path | None = None, global_config: str | Pa
                 replicate_min=input.run_replicate_min(),
                 replicate_max=input.run_replicate_max(),
             )
-            return render.DataGrid(_df(data), filters=True, selection_mode="rows", height="620px")
+            columns = _run_table_columns(data)
+            return _copyable_table(data, columns, link_column="run_id", input_id="selected_run_id", max_rows=1000)
 
         @render.ui
         def run_manifest_filter():
@@ -126,14 +135,14 @@ def create_app(project_config: str | Path | None = None, global_config: str | Pa
         @render.text
         def run_detail():
             touch()
-            run_id = input.run_detail_id().strip()
+            run_id = input.run_detail_id().strip() or input_value("selected_run_id").strip()
             if not run_id:
-                return "Enter a run_id to inspect full params, attempts, and log paths."
+                return "Click a run_id in the table or enter one above to inspect full params, attempts, and log paths."
             runs = [row for row in run_rows(cfg()) if row["run_id"] == run_id]
             attempts = [row for row in attempt_rows(cfg()) if row["run_id"] == run_id]
             return json.dumps({"run": runs[0] if runs else None, "attempts": attempts}, indent=2, sort_keys=True, default=str)
 
-        @render.data_frame
+        @render.ui
         def attempts_table():
             touch()
             data = _filter_attempts(
@@ -142,7 +151,8 @@ def create_app(project_config: str | Path | None = None, global_config: str | Pa
                 search=input.attempt_search(),
                 plan=input.attempt_plan(),
             )
-            return render.DataGrid(_df(data), filters=True, selection_mode="rows", height="620px")
+            columns = _attempt_table_columns(data)
+            return _copyable_table(data, columns, link_column="attempt_id", input_id="selected_attempt_id", max_rows=1000)
 
         @render.ui
         def attempt_plan_filter():
@@ -153,9 +163,9 @@ def create_app(project_config: str | Path | None = None, global_config: str | Pa
         @render.text
         def attempt_detail():
             touch()
-            attempt_id = input.attempt_detail_id().strip()
+            attempt_id = input.attempt_detail_id().strip() or input_value("selected_attempt_id").strip()
             if not attempt_id:
-                return "Enter an attempt_id to inspect metadata and logs."
+                return "Click an attempt_id in the table or enter one above to inspect metadata and logs."
             attempts = [row for row in attempt_rows(cfg()) if row["attempt_id"] == attempt_id]
             attempt = attempts[0] if attempts else None
             log_text = ""
@@ -166,7 +176,7 @@ def create_app(project_config: str | Path | None = None, global_config: str | Pa
         @render.data_frame
         def manifests_table():
             touch()
-            return render.DataGrid(_df(manifest_rows(cfg())), filters=True, selection_mode="rows", height="360px")
+            return render.DataGrid(_df(manifest_rows(cfg())), filters=True, selection_mode="rows", height="520px")
 
         @render.ui
         def manifest_select():
@@ -178,12 +188,12 @@ def create_app(project_config: str | Path | None = None, global_config: str | Pa
         def manifest_preview_table():
             touch()
             manifest_id = input.manifest_id()
-            return render.DataGrid(_df(manifest_preview(cfg(), manifest_id)), filters=True, height="520px")
+            return render.DataGrid(_df(manifest_preview(cfg(), manifest_id)), filters=True, height="700px")
 
         @render.data_frame
         def plans_table():
             touch()
-            return render.DataGrid(_df(plan_rows(cfg())), filters=True, selection_mode="rows", height="420px")
+            return render.DataGrid(_df(plan_rows(cfg())), filters=True, selection_mode="rows", height="620px")
 
         @render.ui
         def plan_select():
@@ -212,7 +222,7 @@ def create_app(project_config: str | Path | None = None, global_config: str | Pa
         @render.data_frame
         def resource_models_table():
             touch()
-            return render.DataGrid(_df(resource_model_rows(cfg())), filters=True, selection_mode="rows", height="300px")
+            return render.DataGrid(_df(resource_model_rows(cfg())), filters=True, selection_mode="rows", height="520px")
 
         @render.ui
         def resource_model_select():
@@ -229,7 +239,7 @@ def create_app(project_config: str | Path | None = None, global_config: str | Pa
         @render.data_frame
         def resource_assessment_table():
             touch()
-            return render.DataGrid(_df(resource_assessment_rows(cfg())), filters=True, height="420px")
+            return render.DataGrid(_df(resource_assessment_rows(cfg())), filters=True, height="680px")
 
         @render.plot
         def runtime_assessment_plot():
@@ -386,8 +396,8 @@ def _overview_page():
         ui.output_ui("project_header"),
         ui.output_ui("overview_cards"),
         ui.layout_columns(
-            ui.card(ui.card_header("Runs by status"), ui.output_plot("run_status_plot")),
-            ui.card(ui.card_header("Attempts by status"), ui.output_plot("attempt_status_plot")),
+            ui.card(ui.card_header("Runs by status"), ui.output_plot("run_status_plot", height="560px"), fill=False),
+            ui.card(ui.card_header("Attempts by status"), ui.output_plot("attempt_status_plot", height="560px"), fill=False),
         ),
         value="Overview",
     )
@@ -403,10 +413,14 @@ def _runs_page():
                 ui.input_numeric("run_replicate_min", "Min replicate", 1, min=1),
                 ui.input_numeric("run_replicate_max", "Max replicate", 999999, min=1),
                 ui.input_text("run_search", "Text search", placeholder="run_id, param_set_id, params"),
-                ui.input_text("run_detail_id", "Run detail run_id", placeholder="paste run_id"),
             ),
-            ui.card(ui.card_header("Logical runs"), ui.output_data_frame("runs_table")),
-            ui.card(ui.card_header("Run detail"), ui.output_text_verbatim("run_detail")),
+            ui.card(ui.card_header("Logical runs"), ui.output_ui("runs_table"), fill=False),
+            ui.card(
+                ui.card_header("Run detail"),
+                ui.input_text("run_detail_id", "Run ID", placeholder="paste run_id or click a run_id above"),
+                ui.output_text_verbatim("run_detail"),
+                fill=False,
+            ),
         ),
         value="Runs",
     )
@@ -420,10 +434,14 @@ def _attempts_page():
                 ui.input_select("attempt_status", "Status", ["any", "planned", "submitted", "running", "succeeded", "failed_oom", "failed_timeout", "failed_node", "failed_simulator_error", "failed_unknown", "not_started_due_to_group_failure"], selected="any"),
                 ui.output_ui("attempt_plan_filter"),
                 ui.input_text("attempt_search", "Text search", placeholder="attempt, run, group, Slurm id"),
-                ui.input_text("attempt_detail_id", "Attempt detail attempt_id", placeholder="paste attempt_id"),
             ),
-            ui.card(ui.card_header("Attempts"), ui.output_data_frame("attempts_table")),
-            ui.card(ui.card_header("Attempt detail and log"), ui.output_text_verbatim("attempt_detail")),
+            ui.card(ui.card_header("Attempts"), ui.output_ui("attempts_table"), fill=False),
+            ui.card(
+                ui.card_header("Attempt detail and log"),
+                ui.input_text("attempt_detail_id", "Attempt ID", placeholder="paste attempt_id or click an attempt_id above"),
+                ui.output_text_verbatim("attempt_detail"),
+                fill=False,
+            ),
         ),
         value="Attempts",
     )
@@ -432,8 +450,8 @@ def _attempts_page():
 def _manifests_page():
     return ui.nav_panel(
         "Manifests",
-        ui.card(ui.card_header("Manifest registry"), ui.output_data_frame("manifests_table")),
-        ui.card(ui.card_header("Manifest preview"), ui.output_ui("manifest_select"), ui.output_data_frame("manifest_preview_table")),
+        ui.card(ui.card_header("Manifest registry"), ui.output_data_frame("manifests_table"), fill=False),
+        ui.card(ui.card_header("Manifest preview"), ui.output_ui("manifest_select"), ui.output_data_frame("manifest_preview_table"), fill=False),
         value="Manifests",
     )
 
@@ -441,8 +459,8 @@ def _manifests_page():
 def _plans_page():
     return ui.nav_panel(
         "Plans",
-        ui.card(ui.card_header("Plan registry and directories"), ui.output_data_frame("plans_table")),
-        ui.card(ui.card_header("Plan file preview"), ui.output_ui("plan_select"), ui.output_text_verbatim("plan_file_preview")),
+        ui.card(ui.card_header("Plan registry and directories"), ui.output_data_frame("plans_table"), fill=False),
+        ui.card(ui.card_header("Plan file preview"), ui.output_ui("plan_select"), ui.output_text_verbatim("plan_file_preview"), fill=False),
         value="Plans",
     )
 
@@ -451,12 +469,12 @@ def _resources_page():
     return ui.nav_panel(
         "Resources",
         ui.layout_columns(
-            ui.card(ui.card_header("Runtime assessment"), ui.output_plot("runtime_assessment_plot")),
-            ui.card(ui.card_header("RAM assessment"), ui.output_plot("ram_assessment_plot")),
+            ui.card(ui.card_header("Runtime assessment"), ui.output_plot("runtime_assessment_plot", height="560px"), fill=False),
+            ui.card(ui.card_header("RAM assessment"), ui.output_plot("ram_assessment_plot", height="560px"), fill=False),
         ),
-        ui.card(ui.card_header("Resource models"), ui.output_data_frame("resource_models_table")),
-        ui.card(ui.card_header("Selected model JSON"), ui.output_ui("resource_model_select"), ui.output_text_verbatim("resource_model_json")),
-        ui.card(ui.card_header("Resource assessment rows"), ui.output_data_frame("resource_assessment_table")),
+        ui.card(ui.card_header("Resource models"), ui.output_data_frame("resource_models_table"), fill=False),
+        ui.card(ui.card_header("Selected model JSON"), ui.output_ui("resource_model_select"), ui.output_text_verbatim("resource_model_json"), fill=False),
+        ui.card(ui.card_header("Resource assessment rows"), ui.output_data_frame("resource_assessment_table"), fill=False),
         value="Resources",
     )
 
@@ -522,6 +540,81 @@ def _df(rows: list[dict[str, Any]]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _copyable_table(
+    rows: list[dict[str, Any]],
+    columns: list[str],
+    link_column: str | None = None,
+    input_id: str | None = None,
+    max_rows: int = 500,
+):
+    shown = rows[:max_rows]
+    header = "".join(f"<th>{html.escape(column)}</th>" for column in columns)
+    body_rows = []
+    for row in shown:
+        cells = []
+        for column in columns:
+            value = "" if row.get(column) is None else str(row.get(column, ""))
+            escaped = html.escape(value)
+            if column == link_column and input_id and value:
+                js_input = json.dumps(input_id)
+                js_value = json.dumps(value)
+                js_text_input = json.dumps("run_detail_id" if input_id == "selected_run_id" else "attempt_detail_id")
+                escaped = (
+                    f'<a class="id-link" href="#" '
+                    f'onclick=\''
+                    f'const el = document.getElementById({js_text_input}); '
+                    f'if (el) {{ el.value = {js_value}; el.dispatchEvent(new Event("change", {{bubbles: true}})); }} '
+                    f'Shiny.setInputValue({js_input}, {js_value}, {{"priority": "event"}}); '
+                    f'return false;\'>'
+                    f"{escaped}</a>"
+                )
+            cells.append(f"<td>{escaped}</td>")
+        body_rows.append("<tr>" + "".join(cells) + "</tr>")
+    notice = ""
+    if len(rows) > len(shown):
+        notice = f'<div class="table-notice">Showing first {len(shown):,} of {len(rows):,} rows. Narrow filters to inspect the rest.</div>'
+    table = f"""
+    <div class="table-notice">Rows shown: {len(shown):,}. Text is selectable/copyable; click IDs for details.</div>
+    {notice}
+    <div class="copy-table-wrap">
+      <table class="copy-table">
+        <thead><tr>{header}</tr></thead>
+        <tbody>{''.join(body_rows)}</tbody>
+      </table>
+    </div>
+    """
+    return ui.HTML(table)
+
+
+def _run_table_columns(rows: list[dict[str, Any]]) -> list[str]:
+    base = ["run_id", "param_set_id", "replicate", "status", "attempt_count", "best_attempt_id", "first_manifest_id", "updated_at"]
+    param_cols = sorted({key for row in rows for key in row if key.startswith("params.")})
+    return [column for column in base + param_cols if any(column in row for row in rows)]
+
+
+def _attempt_table_columns(rows: list[dict[str, Any]]) -> list[str]:
+    preferred = [
+        "attempt_id",
+        "run_id",
+        "status",
+        "attempt",
+        "plan_id",
+        "group_id",
+        "array_id",
+        "slurm_job_id",
+        "slurm_array_task_id",
+        "allocated_time_minutes",
+        "allocated_ram_gb",
+        "elapsed_seconds",
+        "max_rss_gb",
+        "exit_code",
+        "exit_reason",
+        "started_at",
+        "ended_at",
+    ]
+    return [column for column in preferred if any(column in row for row in rows)]
+
+
 def _filter_runs(rows: list[dict[str, Any]], status: str, search: str, manifest: str, replicate_min: float, replicate_max: float) -> list[dict[str, Any]]:
     search_lower = (search or "").lower()
     out = []
@@ -556,22 +649,24 @@ def _filter_attempts(rows: list[dict[str, Any]], status: str, search: str, plan:
 def _bar_plot(counts: dict[str, int], title: str, ylabel: str):
     import matplotlib.pyplot as plt
 
-    fig, ax = plt.subplots(figsize=(8, 4))
+    fig, ax = plt.subplots(figsize=(10, 6))
     if counts:
         labels = list(counts)
         values = [counts[label] for label in labels]
-        ax.bar(labels, values, color="#2563eb")
-        ax.tick_params(axis="x", rotation=35)
+        bars = ax.bar(labels, values, color="#2563eb")
+        ax.bar_label(bars, labels=[str(value) for value in values], padding=4, fontsize=10)
+        ax.set_ylim(0, max(values) * 1.18 if max(values) else 1)
+        ax.tick_params(axis="x", rotation=35, labelsize=9)
     ax.set_title(title)
     ax.set_ylabel(ylabel)
-    fig.tight_layout()
+    fig.tight_layout(pad=2.0)
     return fig
 
 
 def _scatter_plot(rows: list[dict[str, Any]], x_key: str, y_key: str, title: str, xlabel: str, ylabel: str):
     import matplotlib.pyplot as plt
 
-    fig, ax = plt.subplots(figsize=(7, 4))
+    fig, ax = plt.subplots(figsize=(9, 6))
     x_vals = []
     y_vals = []
     for row in rows:
@@ -590,13 +685,16 @@ def _scatter_plot(rows: list[dict[str, Any]], x_key: str, y_key: str, title: str
     ax.set_title(title)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
-    fig.tight_layout()
+    fig.tight_layout(pad=2.0)
     return fig
 
 
 _CSS = """
+html, body { height: auto !important; overflow-y: auto !important; }
 body { background: #f7f3ea; color: #172026; }
 .navbar { background: linear-gradient(90deg, #132a35, #275163) !important; }
+.container-fluid { max-width: 1600px; }
+.card { margin-bottom: 1.1rem; overflow: visible; }
 .hero {
   background: radial-gradient(circle at top left, #fff7d6, #d9edf2 55%, #f7f3ea);
   border: 1px solid #d6c8a8;
@@ -622,5 +720,47 @@ body { background: #f7f3ea; color: #172026; }
 .metric-title { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; color: #60717a; }
 .metric-value { font-size: 1.75rem; font-weight: 800; color: #12313d; }
 .metric-subtitle { font-size: .82rem; color: #60717a; }
-pre { max-height: 680px; overflow: auto; background: #102027 !important; color: #e9f7ef !important; }
+pre { max-height: 900px; overflow: auto; background: #102027 !important; color: #e9f7ef !important; }
+.copy-table-wrap {
+  max-height: 760px;
+  overflow: auto;
+  border: 1px solid #d8c9a9;
+  border-radius: 14px;
+  background: #fffdf7;
+}
+.copy-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: .84rem;
+  user-select: text;
+}
+.copy-table th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #17313c;
+  color: #f9f7ef;
+  text-align: left;
+  padding: .55rem .65rem;
+  white-space: nowrap;
+}
+.copy-table td {
+  padding: .45rem .65rem;
+  border-top: 1px solid #eadfc7;
+  white-space: nowrap;
+  vertical-align: top;
+}
+.copy-table tr:nth-child(even) td { background: #fbf6e9; }
+.id-link {
+  color: #0f5f7a;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.table-notice {
+  color: #60717a;
+  font-size: .86rem;
+  margin: .25rem 0 .55rem 0;
+}
 """

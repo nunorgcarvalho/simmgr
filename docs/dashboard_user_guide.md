@@ -21,8 +21,8 @@ By default the app binds to `127.0.0.1`, so it is local-only. Add `--launch-brow
 The dashboard includes:
 
 - `Overview`: project paths, run/attempt status counts, latest plan, latest manifest, latest resource model, and status plots.
-- `Runs`: one row per logical run, with status/search/manifest/replicate filters and a run detail viewer.
-- `Attempts`: one row per attempt, with status/search/plan filters and an attempt log viewer.
+- `Runs`: one row per logical run, with status/search/manifest/replicate filters and a run detail viewer. Run IDs are normal selectable text; click a run ID to populate the detail pane.
+- `Attempts`: one row per attempt, with status/search/plan filters and an attempt log viewer. Attempt IDs are normal selectable text; click an attempt ID to populate the detail pane.
 - `Manifests`: ingested and on-disk manifests, plus immutable manifest previews.
 - `Plans`: plan directories, submission state, attempt summaries, and previews for plan TSVs, summaries, and sbatch commands.
 - `Resources`: resource model metadata, model JSON, resource assessment rows, and predicted-vs-observed plots.
