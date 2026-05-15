@@ -16,19 +16,20 @@ def append(path: Path, event: dict) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--params-json", required=True)
-    parser.add_argument("--run-id", required=True)
-    parser.add_argument("--param-set-id", required=True)
-    parser.add_argument("--replicate", required=True, type=int)
-    parser.add_argument("--attempt-id", required=True)
-    parser.add_argument("--attempt", required=True, type=int)
+    parser.add_argument("--run-id")
+    parser.add_argument("--param-set-id")
+    parser.add_argument("--replicate", type=int)
+    parser.add_argument("--attempt-id")
+    parser.add_argument("--attempt", type=int)
     parser.add_argument("--seed", required=True, type=int)
     parser.add_argument("--log-path", required=True)
-    parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--output-dir")
     args = parser.parse_args()
     params = json.loads(args.params_json)
     log_path = Path(args.log_path)
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = Path(args.output_dir) if args.output_dir else None
+    if output_dir:
+        output_dir.mkdir(parents=True, exist_ok=True)
     start = time.time()
     try:
         import numpy as np
@@ -54,16 +55,17 @@ def main() -> int:
         pop.add_trait(name="y1", effects={"A": effects["A"], "A_par": effects["A_par"]}, var_Eps=max(0.01, 1 - h2))
         y = pop.traits["y1"].y
         result = {
-            "run_id": args.run_id,
-            "attempt_id": args.attempt_id,
+            "run_id": args.run_id or "",
+            "attempt_id": args.attempt_id or "",
             "mean_y": float(np.mean(y)),
             "var_y": float(np.var(y)),
             "noise_check": float(rng.normal()),
         }
-        result_path = output_dir / "summary.json"
-        result_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         append(log_path, {"event": "result", **result})
-        append(log_path, {"event": "result_file", "kind": "summary", "path": str(result_path), "format": "json"})
+        if output_dir:
+            result_path = output_dir / "summary.json"
+            result_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            append(log_path, {"event": "result_file", "kind": "summary", "path": str(result_path), "format": "json"})
         append(
             log_path,
             {

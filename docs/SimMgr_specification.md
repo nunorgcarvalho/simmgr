@@ -223,6 +223,18 @@ Example:
 ```yaml
 default_project_config: /path/to/current/project/project_config.yaml
 
+simulator_defaults:
+  arguments:
+    params-json: true
+    seed: true
+    log-path: true
+    run-id: false
+    param-set-id: false
+    replicate: false
+    attempt-id: false
+    attempt: false
+    output-dir: false
+
 slurm_defaults:
   partition: short
   account: my_account
@@ -317,6 +329,16 @@ project_root: /path/to/project_sims
 simulator:
   script: /path/to/project/simulator.py
   python_executable: python
+  arguments:
+    params-json: true
+    seed: true
+    log-path: true
+    run-id: false
+    param-set-id: false
+    replicate: false
+    attempt-id: false
+    attempt: false
+    output-dir: false
 
 slurm:
   partition: short
@@ -1218,11 +1240,36 @@ Purpose:
 
 - wrapper around the project-specific Python simulator;
 - prepare metadata;
-- call simulator script with standardized arguments;
+- call simulator script with configured standardized arguments;
 - append SimMgr-level final attempt event;
 - return simulator exit code/status to caller.
 
-The simulator should be called conceptually as:
+The default simulator call should be compact:
+
+```bash
+python simulator.py \
+  --params-json '<canonical params json>' \
+  --seed '<seed>' \
+  --log-path '<attempt_log_path>'
+```
+
+The project config may opt into any of the legacy/full interface arguments through `simulator.arguments`:
+
+```yaml
+simulator:
+  arguments:
+    params-json: true
+    seed: true
+    log-path: true
+    run-id: true
+    param-set-id: true
+    replicate: true
+    attempt-id: true
+    attempt: true
+    output-dir: true
+```
+
+With all arguments enabled, the simulator is called conceptually as:
 
 ```bash
 python simulator.py \
@@ -1237,7 +1284,7 @@ python simulator.py \
   --output-dir '<output_dir>'
 ```
 
-The exact argument names may be implemented by Codex, but the interface should contain these fields.
+Supported argument keys are `params-json`, `run-id`, `param-set-id`, `replicate`, `attempt-id`, `attempt`, `seed`, `log-path`, and `output-dir`.
 
 `run-one` should not write to the SQLite registry from inside a Slurm job in v1. It should write structured JSONL events that `collect-status` later ingests.
 

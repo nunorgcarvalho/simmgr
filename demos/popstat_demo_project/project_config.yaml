@@ -1,6 +1,16 @@
 project_name: popstat_demo_project
 project_root: /n/groups/price/nuno/simmgr/demos/popstat_demo_project
 simulator:
+  arguments:
+    params-json: true
+    run-id: false
+    param-set-id: false
+    replicate: false
+    attempt-id: false
+    attempt: false
+    seed: true
+    log-path: true
+    output-dir: false
   script: /n/groups/price/nuno/simmgr/demos/popstat_demo_simulator.py
   python_executable: /n/groups/price/nuno/.venv_py13/bin/python
 randomness:

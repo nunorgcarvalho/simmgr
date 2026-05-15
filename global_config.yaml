@@ -1,5 +1,17 @@
 default_project_config: /n/groups/price/nuno/simmgr/demos/popstat_demo_project/project_config.yaml
 
+simulator_defaults:
+  arguments:
+    params-json: true
+    run-id: false
+    param-set-id: false
+    replicate: false
+    attempt-id: false
+    attempt: false
+    seed: true
+    log-path: true
+    output-dir: false
+
 slurm_defaults:
   partition: short
   account: ""

@@ -68,6 +68,16 @@ The most important fields are:
 simulator:
   script: /path/to/my_simulator.py
   python_executable: python
+  arguments:
+    params-json: true
+    seed: true
+    log-path: true
+    run-id: false
+    param-set-id: false
+    replicate: false
+    attempt-id: false
+    attempt: false
+    output-dir: false
 
 resources:
   default_time_minutes: 60
@@ -323,7 +333,32 @@ Exports go to timestamped directories under `registry/exports/`. They are snapsh
 
 ## 15. Simulator Contract
 
-SimMgr calls your simulator like this:
+By default, SimMgr calls your simulator with only the compact required interface:
+
+```bash
+python simulator.py \
+  --params-json '<canonical params json>' \
+  --seed '<deterministic seed>' \
+  --log-path '<attempt_log_path>'
+```
+
+The arguments passed to the simulator are controlled by `simulator.arguments` in `project_config.yaml`. The default is `params-json`, `seed`, and `log-path`. The older, fuller interface is still available by setting additional argument booleans to `true`:
+
+```yaml
+simulator:
+  arguments:
+    params-json: true
+    seed: true
+    log-path: true
+    run-id: true
+    param-set-id: true
+    replicate: true
+    attempt-id: true
+    attempt: true
+    output-dir: true
+```
+
+With all arguments enabled, the call is:
 
 ```bash
 python simulator.py \

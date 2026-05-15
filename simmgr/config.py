@@ -8,6 +8,19 @@ from .mini_yaml import load_yaml
 
 
 DEFAULT_GLOBAL_CONFIG: dict[str, Any] = {
+    "simulator_defaults": {
+        "arguments": {
+            "params-json": True,
+            "run-id": False,
+            "param-set-id": False,
+            "replicate": False,
+            "attempt-id": False,
+            "attempt": False,
+            "seed": True,
+            "log-path": True,
+            "output-dir": False,
+        }
+    },
     "slurm_defaults": {
         "partition": "short",
         "account": "",
@@ -129,6 +142,7 @@ def _deep_update(base: dict[str, Any], updates: dict[str, Any]) -> None:
 
 
 def make_default_project_config(project_root: Path, global_config: dict[str, Any]) -> dict[str, Any]:
+    simulator_defaults = _deepcopy(global_config.get("simulator_defaults", DEFAULT_GLOBAL_CONFIG["simulator_defaults"]))
     slurm = _deepcopy(global_config.get("slurm_defaults", DEFAULT_GLOBAL_CONFIG["slurm_defaults"]))
     resources = _deepcopy(global_config.get("resource_defaults", DEFAULT_GLOBAL_CONFIG["resource_defaults"]))
     paths = _deepcopy(global_config.get("path_defaults", DEFAULT_GLOBAL_CONFIG["path_defaults"]))
@@ -136,7 +150,11 @@ def make_default_project_config(project_root: Path, global_config: dict[str, Any
     return {
         "project_name": project_root.name,
         "project_root": str(project_root.resolve()),
-        "simulator": {"script": str(project_root / "simulator.py"), "python_executable": os.environ.get("PYTHON", "python")},
+        "simulator": {
+            **simulator_defaults,
+            "script": str(project_root / "simulator.py"),
+            "python_executable": os.environ.get("PYTHON", "python"),
+        },
         "randomness": {"project_seed": 123456},
         "slurm": slurm,
         "resources": resources,

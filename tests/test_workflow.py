@@ -19,6 +19,7 @@ from simmgr.query_runs import query_runs
 from simmgr.resources import learn_resources
 from simmgr.registry import connect
 from simmgr.run_group import run_group
+from simmgr.run_one import _simulator_command
 from simmgr.suggest_pilot import suggest_pilot
 from simmgr.submit_jobs import submit_jobs
 from simmgr.tsv import read_tsv
@@ -35,10 +36,11 @@ def test_manifest_registry_plan_and_local_execution(tmp_path: Path, monkeypatch)
             from pathlib import Path
 
             parser = argparse.ArgumentParser()
-            for arg in ["params-json", "run-id", "param-set-id", "replicate", "attempt-id", "attempt", "seed", "log-path", "output-dir"]:
+            for arg in ["params-json", "seed", "log-path"]:
                 parser.add_argument("--" + arg, required=True)
             args = parser.parse_args()
-            Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+            json.loads(args.params_json)
+            int(args.seed)
             with open(args.log_path, "a", encoding="utf-8") as handle:
                 handle.write(json.dumps({"event": "simulator_finished", "status": "succeeded"}) + "\\n")
             """
@@ -94,6 +96,34 @@ def test_init_uses_global_default_project_config_parent(tmp_path: Path) -> None:
     assert root == project
     assert (project / "project_config.yaml").exists()
     assert (project / "registry" / "simmgr.sqlite").exists()
+
+
+def test_simulator_argument_config_defaults_and_legacy_flags() -> None:
+    run = {"params_json": "{}", "run_id": "run_1", "param_set_id": "param_1", "replicate": 2}
+    attempt = {"attempt": 3}
+    config = {"simulator": {"script": "simulator.py", "python_executable": "python"}}
+    default_command = _simulator_command(config, run, attempt, "attempt_1", 123, Path("attempt.jsonl"), Path("out"))
+    assert default_command == [
+        "python",
+        "simulator.py",
+        "--params-json",
+        "{}",
+        "--seed",
+        "123",
+        "--log-path",
+        "attempt.jsonl",
+    ]
+    config["simulator"]["arguments"] = {
+        "run-id": True,
+        "param-set-id": True,
+        "replicate": True,
+        "attempt-id": True,
+        "attempt": True,
+        "output-dir": True,
+    }
+    legacy_command = _simulator_command(config, run, attempt, "attempt_1", 123, Path("attempt.jsonl"), Path("out"))
+    for flag in ["--run-id", "--param-set-id", "--replicate", "--attempt-id", "--attempt", "--output-dir"]:
+        assert flag in legacy_command
 
 
 def test_overlapping_manifest_ingest_records_membership(tmp_path: Path) -> None:

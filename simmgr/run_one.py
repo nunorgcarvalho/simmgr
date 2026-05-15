@@ -8,7 +8,7 @@ from typing import Any
 
 from . import __version__
 from .canonicalize import parse_params_json
-from .config import configured_path, load_project_config, registry_path
+from .config import DEFAULT_GLOBAL_CONFIG, configured_path, load_project_config, registry_path
 from .ids import deterministic_seed
 from .logging_utils import append_jsonl
 from .registry import connect, row
@@ -53,30 +53,7 @@ def run_one(
             "simmgr_version": __version__,
         },
     )
-    script = config["simulator"]["script"]
-    python = config["simulator"].get("python_executable", "python")
-    command = [
-        python,
-        script,
-        "--params-json",
-        run["params_json"],
-        "--run-id",
-        run["run_id"],
-        "--param-set-id",
-        run["param_set_id"],
-        "--replicate",
-        str(run["replicate"]),
-        "--attempt-id",
-        attempt_id,
-        "--attempt",
-        str(attempt["attempt"]),
-        "--seed",
-        str(seed),
-        "--log-path",
-        str(log_path),
-        "--output-dir",
-        str(output_dir),
-    ]
+    command = _simulator_command(config, run, attempt, attempt_id, seed, log_path, output_dir)
     start = time.time()
     result = subprocess.run(command, check=False)
     elapsed = time.time() - start
@@ -95,3 +72,38 @@ def run_one(
 
 def run_one_from_fields(project_config: str | Path, attempt: dict[str, Any]) -> int:
     return run_one(project_config, attempt["attempt_id"])
+
+
+def _simulator_command(
+    config: dict[str, Any],
+    run: dict[str, Any],
+    attempt: dict[str, Any],
+    attempt_id: str,
+    seed: int,
+    log_path: Path,
+    output_dir: Path,
+) -> list[str]:
+    script = config["simulator"]["script"]
+    python = config["simulator"].get("python_executable", "python")
+    values = {
+        "params-json": run["params_json"],
+        "run-id": run["run_id"],
+        "param-set-id": run["param_set_id"],
+        "replicate": run["replicate"],
+        "attempt-id": attempt_id,
+        "attempt": attempt["attempt"],
+        "seed": seed,
+        "log-path": log_path,
+        "output-dir": output_dir,
+    }
+    command = [python, script]
+    for name, enabled in _simulator_arguments(config).items():
+        if enabled:
+            command.extend([f"--{name}", str(values[name])])
+    return command
+
+
+def _simulator_arguments(config: dict[str, Any]) -> dict[str, bool]:
+    defaults = DEFAULT_GLOBAL_CONFIG["simulator_defaults"]["arguments"]
+    configured = config.get("simulator", {}).get("arguments", {})
+    return {name: bool(configured.get(name, enabled)) for name, enabled in defaults.items()}
