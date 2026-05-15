@@ -19,6 +19,7 @@ from simmgr.query_runs import query_runs
 from simmgr.resources import learn_resources
 from simmgr.registry import connect
 from simmgr.run_group import run_group
+from simmgr.suggest_pilot import suggest_pilot
 from simmgr.submit_jobs import submit_jobs
 from simmgr.tsv import read_tsv
 
@@ -133,6 +134,25 @@ def test_plan_jobs_status_any_and_not_succeeded(tmp_path: Path) -> None:
     not_succeeded_plan = plan_jobs(config_path, status="not_succeeded", generous_resources=True)
     assert len(read_tsv(any_plan / "selected_runs.tsv")) == 8
     assert len(read_tsv(not_succeeded_plan / "selected_runs.tsv")) == 7
+
+
+def test_suggest_pilot_uses_lowest_unfinished_replicate_and_next_file(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    init_project(project)
+    config_path = project / "project_config.yaml"
+    manifest = build_manifest(config_path)
+    ingest_manifest(config_path, manifest)
+    with connect(project / "registry" / "simmgr.sqlite") as conn:
+        conn.execute("UPDATE runs SET status = 'succeeded' WHERE replicate = 1")
+        conn.commit()
+    first = suggest_pilot(config_path, n_runs=3)
+    first_rows = read_tsv(first)
+    assert first.name == "pilot_001.tsv"
+    assert len(first_rows) == 3
+    assert {row["run_id"].rsplit("_r", 1)[1] for row in first_rows} == {"2"}
+    second = suggest_pilot(config_path, n_runs=2)
+    assert second.name == "pilot_002.tsv"
+    assert len(read_tsv(second)) == 2
 
 
 def test_ram_predictions_are_capped_in_gb(tmp_path: Path) -> None:

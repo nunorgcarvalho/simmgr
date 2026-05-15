@@ -12,6 +12,8 @@ Make sure your shell's `python` command points at the environment you want to us
 python -m simmgr.cli init --project-root /path/to/project
 python -m simmgr.cli build-manifest
 python -m simmgr.cli ingest-manifest --manifest latest
+python -m simmgr.cli suggest-pilot --n-runs 10
+python -m simmgr.cli plan-jobs --pilot-set pilot_001.tsv --generous-resources --one-run-per-group
 python -m simmgr.cli plan-jobs --where 'status == "pending"'
 ```
 

@@ -146,6 +146,16 @@ The query language is intentionally small and safe. It supports comparisons on r
 
 Pilot jobs teach SimMgr the approximate resource curve. The pilot set should span the parameters that drive runtime and memory.
 
+The easiest way to create a first pilot is:
+
+```bash
+python -m simmgr.cli suggest-pilot --n-runs 10
+```
+
+`suggest-pilot` reads the resource-model settings in `simulation_spec.yaml`, jointly samples diverse parameter sets across those resource-relevant parameters, and writes a normal one-column pilot TSV. Parameters that are not part of the resource model are allowed to vary through random tie-breaking. For each chosen parameter set, SimMgr picks the lowest-numbered replicate that has not already succeeded. That usually means replicate 1, but if replicate 1 already completed, it will use replicate 2, and so on.
+
+If the project still only has an empty `pilot_sets/pilot_001.tsv`, this command fills that file. Otherwise, it creates the next available file, such as `pilot_sets/pilot_002.tsv`.
+
 A weak pilot might only include tiny runs:
 
 ```text
@@ -163,7 +173,7 @@ large:   N = 5000,  num_variants = 5000
 
 You do not need many replicates for the first pilot. One or two representative runs per resource regime is often more informative than many replicates of the smallest condition.
 
-Put selected run IDs in `pilot_sets/pilot_001.tsv`:
+If you prefer to choose pilots manually, put selected run IDs in `pilot_sets/pilot_001.tsv`:
 
 ```text
 run_id

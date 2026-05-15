@@ -14,6 +14,7 @@ from .resources import learn_resources
 from .run_group import run_group
 from .run_one import run_one
 from .submit_jobs import submit_jobs
+from .suggest_pilot import suggest_pilot
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -37,6 +38,12 @@ def main(argv: list[str] | None = None) -> int:
     query.add_argument("--where")
     query.add_argument("--status")
     query.add_argument("--output")
+
+    pilot = sub.add_parser("suggest-pilot")
+    _project_args(pilot)
+    pilot.add_argument("--n-runs", type=int, default=10)
+    pilot.add_argument("--output")
+    pilot.add_argument("--seed", type=int)
 
     learn = sub.add_parser("learn-resources")
     _project_args(learn)
@@ -90,6 +97,8 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "query":
         data = query_runs(args.project_config, args.where, args.status, args.output, args.global_config)
         _print_rows(data)
+    elif args.command == "suggest-pilot":
+        print(suggest_pilot(args.project_config, args.n_runs, args.output, args.seed, args.global_config))
     elif args.command == "learn-resources":
         print(learn_resources(args.project_config, args.global_config))
     elif args.command == "plan-jobs":

@@ -1845,6 +1845,14 @@ ad420bb91e55_r1
 
 The initial project contains a blank pilot file with only the header.
 
+SimMgr also provides a helper command for creating an initial pilot set:
+
+```bash
+simmgr suggest-pilot --n-runs 10
+```
+
+The command samples parameter sets from the ingested registry, prioritizing diversity across the parameters named in `resource_model.numeric_parameters` and `resource_model.categorical_parameters`. It then chooses, for each selected parameter set, the lowest-numbered replicate whose run status is not `succeeded`. If the project contains only an empty `pilot_sets/pilot_001.tsv`, that file is filled; otherwise, the helper writes the next `pilot_XXX.tsv` file.
+
 ---
 
 ### 12.2 Pilot workflow
@@ -1854,7 +1862,7 @@ Suggested workflow:
 ```text
 1. build manifest
 2. ingest manifest
-3. user fills pilot_sets/pilot_001.tsv with selected run IDs
+3. user fills pilot_sets/pilot_001.tsv with selected run IDs, or runs suggest-pilot
 4. plan jobs using the pilot set with generous resources
 5. submit jobs
 6. collect status
